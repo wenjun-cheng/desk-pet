@@ -9,3 +9,8 @@ tzdata==2026.5; sys_platform == "win32"
 ptyprocess>=0.7; sys_platform != "win32"
 pynput>=1.7; sys_platform != "win32"
 pyobjc-framework-Quartz>=10; sys_platform == "darwin"
+# voice input (on Linux also the libportaudio2 package)
+faster-whisper==1.2.1
+sounddevice==0.5.6
+opencc-python-reimplemented==0.1.7
+numpy

@@ -8,7 +8,7 @@ import time
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QPainter, QPainterPath, QPalette, QPen, \
     QTextCursor, QTextDocument, QTextOption
-from PySide6.QtWidgets import QFrame, QTextEdit, QWidget
+from PySide6.QtWidgets import QFrame, QTextEdit, QToolTip, QWidget
 
 from . import desktop
 
@@ -29,6 +29,22 @@ def ui_font(px: float, bold: bool = False) -> QFont:
     f.setBold(bold)
     return f
 
+
+def _mic(p: QPainter, c: QPointF, color: QColor):
+    """A microphone in outline, 14 px tall, centred on c."""
+    p.save()
+    p.translate(c)
+    p.setPen(QPen(color, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(QRectF(-3, -7, 6, 9.5), 3, 3)
+    stand = QPainterPath(QPointF(-5.5, -1.5))
+    stand.arcTo(QRectF(-5.5, -6, 11, 9.5), 180, 180)
+    p.drawPath(stand)
+    p.drawLine(QPointF(0, 3.5), QPointF(0, 6.5))
+    p.drawLine(QPointF(-3, 6.5), QPointF(3, 6.5))
+    p.restore()
+
+
 TEXT_STYLE = (
     "QTextEdit { background: transparent; border: none; padding: 0; color: %s;"
     " selection-background-color: #d97757; selection-color: white; }"
@@ -37,6 +53,7 @@ TEXT_STYLE = (
     "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
     "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }")
 WRAP = QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+SCROLL_W = 6                    # the scroll bar's width (TEXT_STYLE)
 
 
 class _Text(QTextEdit):
@@ -70,8 +87,9 @@ class _Text(QTextEdit):
         fm = QFontMetricsF(self.font())
         return max(fm.horizontalAdvance(line) for line in text.split("\n"))
 
-    def height_for(self, width: float, text: str | None = None) -> float:
-        """How tall the text is when it wraps at `width`."""
+    def height_for(self, width: float, text: str | None = None, lines: int | None = None) -> float:
+        """How tall the text is when it wraps at `width`: all of it, or its first `lines` lines (as they are:
+        a Chinese line, in the fallback font, is taller than a Latin one)."""
         doc = QTextDocument()
         doc.setDefaultFont(self.font())
         doc.setDocumentMargin(0)
@@ -80,7 +98,19 @@ class _Text(QTextEdit):
         doc.setDefaultTextOption(option)
         doc.setPlainText(self.toPlainText() if text is None else text)
         doc.setTextWidth(width)
-        return doc.size().height()
+        height = doc.size().height()
+        if lines is None:
+            return height
+        block, seen = doc.begin(), 0
+        while block.isValid():
+            layout = block.layout()
+            for i in range(layout.lineCount()):
+                seen += 1
+                if seen == lines:
+                    line = layout.lineAt(i)
+                    return doc.documentLayout().blockBoundingRect(block).top() + line.y() + line.height()
+            block = block.next()
+        return height
 
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) \
@@ -92,14 +122,18 @@ class _Text(QTextEdit):
 
 class SpeechBubble(QWidget):
     """A comic speech bubble whose tail points down at the pet. It can show a message (kind: working, reply,
-    question or error), a line to type into, or both: the message on top, the line under it. Both grow wider
-    with their text up to MAX_W, then taller up to MAX_LINES, then scroll. Nothing closes it by itself, and
-    neither do clicks or Esc: only Ctrl+Alt+Space, a click on the pet or Hide in its menu (see collapse). Put
-    away, it keeps what it shows, and shows it again when it comes back."""
+    question or error), a line to type into, or both: the message on top, the line under it (with a mic at its
+    end, to talk instead: see set_voice). Both grow wider with their text up to MAX_W, then taller up to
+    MAX_LINES, then scroll. Nothing closes it by itself, and neither do clicks or Esc: only Ctrl+Alt+Space, a
+    click on the pet or Hide in its menu (see collapse). Put away, it keeps what it shows, and shows it again
+    when it comes back."""
     submitted = Signal(str)
     shown = Signal()              # it came up (what it shows can be seen)
+    mic_clicked = Signal()        # the mic at the end of the line (or the stop button there, while listening)
+    voice_cancelled = Signal()    # Esc while listening
     MIN_INPUT, MAX_W, MIN_W = 150, 288, 96   # the line starts short and grows with what's typed
     PAD, TAIL, GAP = 14, 15, 12
+    MIC_W = 22                    # room for the mic (or the stop button), right of the line
     MAX_LINES = 5                 # for the message and for the line alike; past that they scroll
     TAIL_IN = 82                  # how far in from its end (nearest the pet) the tail sits: at most a third
     POP_MS = 180
@@ -122,6 +156,11 @@ class SpeechBubble(QWidget):
         self.previous_window = 0  # to give the keyboard back when the line closes
         self.early_keys = ""      # typed while the bubble was still popping up
         self.follow_up = ""       # the line's placeholder once a conversation has started
+        self.voice = ""           # "listening" or "writing": what the voice input is doing (see set_voice)
+        self.mic_tip = ""
+        self.mic_hover = False
+        self.scrolls = (False, False)   # the message, the line: past MAX_LINES (see _fit)
+        self.setMouseTracking(True)
 
         self.text = _Text(self, editable=False)
         self.line = _Text(self, editable=True)
@@ -130,6 +169,7 @@ class SpeechBubble(QWidget):
 
         self.anim_timer = QTimer(self, interval=15, timeout=self._animate)
         self.dot_timer = QTimer(self, interval=350, timeout=self._tick_dots)
+        self.voice_timer = QTimer(self, interval=40, timeout=self.update)  # (the dots while it's written down)
 
     # ------------------------------------------------------------ what it shows
 
@@ -190,6 +230,10 @@ class SpeechBubble(QWidget):
         self.dot_timer.stop()
         self._relayout()
 
+    def popping(self) -> bool:
+        """Still popping up."""
+        return self.anim_timer.isActive()
+
     def has_text(self) -> bool:
         return bool(self.line.toPlainText().strip())
 
@@ -205,9 +249,24 @@ class SpeechBubble(QWidget):
         self.winId()
 
     def put_back(self, text: str):
-        """A message that couldn't be sent goes back in the line."""
+        """A message that couldn't be sent goes back in the line (and what was said, after what was typed)."""
         self.line.setPlainText(text)
         self.line.moveCursor(QTextCursor.MoveOperation.End)
+
+    def set_placeholder(self, text: str):
+        self.line.setPlaceholderText(text)
+        if self.isVisible():
+            self._relayout()  # (the line's width goes by it when it's empty)
+
+    def set_voice(self, state: str):
+        """Where the mic is, at the end of the line: "listening" (a stop button), "writing" (dots while it's
+        written down) or "" (the mic). The line stays as it is: what was said goes after it."""
+        self.voice = state
+        if state == "writing":
+            self.voice_timer.start()
+        else:
+            self.voice_timer.stop()
+        self.update()
 
     def point_at(self, tip: QPoint, flipped: bool = False):
         """Where the tail ends (by the pet's eye), and whether the bubble reaches left of it (mirrored, when the
@@ -240,19 +299,28 @@ class SpeechBubble(QWidget):
                 want = max(want, small.horizontalAdvance(self.hint))
         if self.input_open:
             typed = self.line.toPlainText() or self.line.placeholderText()
-            want = max(want, self.line.natural_width(typed) + 8, self.MIN_INPUT - 2 * self.PAD)
+            want = max(want, self.line.natural_width(typed) + 8 + self.MIC_W, self.MIN_INPUT - 2 * self.PAD)
         width = int(min(self.MAX_W, max(self.MIN_W, want + 2 * self.PAD + 1)))
         inner = width - 2 * self.PAD
-        cap = self.line.height_for(inner, "\n".join("X" * self.MAX_LINES))
         msg_h = hint_h = line_h = 0.0
+        text_scrolls = line_scrolls = False
         if self.message:
             measured = self.message + ("..." if self.kind == "working" else "")
-            msg_h = min(cap, self.text.height_for(inner - lead, measured))
+            msg_h, text_scrolls = self._fit(self.text, inner - lead, measured)
             hint_h = small.height() + 4 if self.hint else 0.0
         if self.input_open:
-            line_h = min(cap, self.line.height_for(inner))
+            line_h, line_scrolls = self._fit(self.line, inner - self.MIC_W)
+        self.scrolls = (text_scrolls, line_scrolls)
         body = 2 * self.PAD + msg_h + hint_h + line_h + (self.GAP if self.message and self.input_open else 0)
         return width, msg_h, hint_h, line_h, body
+
+    def _fit(self, box: _Text, width: float, text: str | None = None) -> tuple[float, bool]:
+        """How tall a box is, and whether it scrolls: all of its text, or past MAX_LINES lines, the first
+        MAX_LINES (laid out a scroll bar narrower: it takes room, which would wrap the text into more lines)."""
+        full = box.height_for(width, text)
+        if full <= box.height_for(width, text, self.MAX_LINES) + 0.5:
+            return full, False
+        return box.height_for(width - SCROLL_W, text, self.MAX_LINES), True
 
     def _relayout(self):
         if self.away or not self.message and not self.input_open:
@@ -274,9 +342,12 @@ class SpeechBubble(QWidget):
         self.tail_x = min(max(base - x, 30 if self.flipped else 22), width - (22 if self.flipped else 30))
         inner = width - 2 * self.PAD
         lead = self._lead()
+        for box, scrolls in zip((self.text, self.line), self.scrolls):  # (a scroll bar only past MAX_LINES)
+            box.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn if scrolls
+                                           else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.text.setGeometry(self.PAD + lead, self.PAD, inner - lead, math.ceil(msg_h))
         line_top = self.PAD + msg_h + hint_h + (self.GAP if self.message else 0)
-        self.line.setGeometry(self.PAD, int(line_top), inner, math.ceil(line_h))
+        self.line.setGeometry(self.PAD, int(line_top), inner - self.MIC_W, math.ceil(line_h))
         if not self.isVisible():
             self.pop_start = time.monotonic()
             self.text.hide()
@@ -373,6 +444,62 @@ class SpeechBubble(QWidget):
             p.setPen(INK if typed else FAINT)
             p.drawText(QRectF(self.line.geometry()), Qt.TextFlag.TextWrapAnywhere,
                        typed or self.line.placeholderText())
+        if self.input_open:
+            self._draw_voice(p)
+
+    def _mic_center(self) -> QPointF:
+        """Right of the line's first row."""
+        row = QFontMetricsF(self.line.font()).height()
+        return QPointF(self.width() - self.PAD - 4, self.line.geometry().top() + row / 2 + 0.5)
+
+    def _on_mic(self, pos: QPointF) -> bool:
+        c = self._mic_center()
+        return self.input_open and self.voice != "writing" and abs(pos.x() - c.x()) <= 11 \
+            and abs(pos.y() - c.y()) <= 11
+
+    def _draw_voice(self, p: QPainter):
+        """At the end of the line: the mic; while listening, a stop button (how loud shows on the pet); while
+        it's written down, three dots."""
+        c = self._mic_center()
+        p.setPen(Qt.PenStyle.NoPen)
+        if self.voice == "listening":
+            p.setBrush(INK)
+            p.drawRoundedRect(QRectF(c.x() - 4.5, c.y() - 4.5, 9, 9), 2, 2)
+        elif self.voice == "writing":
+            t = time.monotonic()
+            for k in range(3):
+                color = QColor(POP)
+                color.setAlphaF(0.35 + 0.65 * max(0.0, math.sin(t * 6 - k * 0.9)))
+                p.setBrush(color)
+                p.drawEllipse(QPointF(c.x() - 8 + k * 6, c.y()), 2, 2)
+        else:
+            _mic(p, c, INK if self.mic_hover else FAINT)
+
+    def mouseMoveEvent(self, e):
+        over = self._on_mic(e.position())
+        if over != self.mic_hover:
+            self.mic_hover = over
+            self.setCursor(Qt.CursorShape.PointingHandCursor if over else Qt.CursorShape.ArrowCursor)
+            if over and not self.voice and self.mic_tip:
+                QToolTip.showText(e.globalPosition().toPoint(), self.mic_tip, self)
+            else:
+                QToolTip.hideText()
+            self.update()
+        super().mouseMoveEvent(e)
+
+    def leaveEvent(self, e):
+        if self.mic_hover:
+            self.mic_hover = False
+            self.unsetCursor()
+            self.update()
+        super().leaveEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self._on_mic(e.position()):
+            QToolTip.hideText()
+            self.mic_clicked.emit()
+            return
+        super().mousePressEvent(e)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -381,8 +508,11 @@ class SpeechBubble(QWidget):
     # ------------------------------------------------------------ input
 
     def keyPressEvent(self, e):
-        """Keys typed while the bubble is still popping up (the line shows when it's done)."""
-        if self.input_open and not self.line.isVisible() and e.text().isprintable() and e.text():
+        """Keys typed while the bubble is still popping up (the line shows when it's done); Esc while listening
+        (from the line too: it doesn't take Esc)."""
+        if e.key() == Qt.Key.Key_Escape and self.voice == "listening":
+            self.voice_cancelled.emit()
+        elif self.input_open and not self.line.isVisible() and e.text().isprintable() and e.text():
             self.early_keys += e.text()
         else:
             super().keyPressEvent(e)

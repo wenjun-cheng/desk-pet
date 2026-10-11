@@ -42,6 +42,7 @@ class Look:
     mark_left: bool = True      # the mark's side (away from the bubble's tail)
     sweat: float = 0.0          # 0..1 a sweat drop sliding down the side of its head
     zzz: float | None = None    # asleep: the z's, 0..1 as they float away
+    sound: float | None = None  # listening to the user: sound arcs at its sides, by how loud they are (0..1)
 
 
 def draw(p: QPainter, look: Look):
@@ -77,6 +78,8 @@ def draw(p: QPainter, look: Look):
         _mark(p, body, look)
     if look.zzz is not None:
         _zzz(p, body, look.zzz)
+    if look.sound is not None:
+        _sound(p, body, look.sound)
     p.restore()
 
 
@@ -177,6 +180,18 @@ def _zzz(p: QPainter, body: QRectF, phase: float):
         color.setAlpha(int(230 * (1 - k)))
         p.setPen(color)
         p.drawText(QPointF(body.right() - 2 + 7 * k, body.top() - 2 - 12 * k), "z")
+
+
+def _sound(p: QPainter, body: QRectF, level: float):
+    """Sound coming in at both sides of its head: one arc each side, two once the voice is up."""
+    for side, x in ((-1, body.left() - 1), (1, body.right() + 1)):
+        for i in range(1 + round(max(0.0, min(1.0, level)))):
+            r = 4.5 + 3.6 * i
+            color = QColor(EYE)
+            color.setAlphaF(0.85 - 0.22 * i)
+            p.setPen(QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawArc(QRectF(x - r, body.top() + 12 - r, 2 * r, 2 * r), (-40 if side > 0 else 140) * 16, 80 * 16)
 
 
 def _bold() -> QFont:

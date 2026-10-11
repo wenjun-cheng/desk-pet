@@ -10,7 +10,7 @@ import winreg
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QCoreApplication, QObject, Signal
+from PySide6.QtCore import QAbstractNativeEventFilter, QCoreApplication, QObject, QTimer, Signal
 
 from .base import *  # noqa: F401,F403  (what isn't overridden here)
 from .base import __all__  # noqa: F401
@@ -236,8 +236,10 @@ def pid_alive(pid: int) -> bool:
 
 
 class Hotkey(QObject):
-    """Ctrl+Alt+Space from anywhere (RegisterHotKey): `pressed`."""
+    """Ctrl+Alt+Space from anywhere (RegisterHotKey): `pressed`, then `released` once Space is let go (a hotkey
+    only says when it's pressed: from then, Space is looked at until it's up)."""
     pressed = Signal()
+    released = Signal()
     WM_HOTKEY, ID = 0x0312, 1
 
     class _Filter(QAbstractNativeEventFilter):
@@ -251,6 +253,7 @@ class Hotkey(QObject):
                 msg = wintypes.MSG.from_address(int(message))
                 if msg.message == Hotkey.WM_HOTKEY and msg.wParam == Hotkey.ID:
                     self.hotkey.pressed.emit()
+                    self.hotkey._watch.start()
                     return True, 0
             return False, 0
 
@@ -259,6 +262,12 @@ class Hotkey(QObject):
         self.ok = bool(_u32.RegisterHotKey(None, self.ID, 0x2 | 0x1 | 0x4000, 0x20))  # Ctrl, Alt, no repeat; Space
         self._filter = self._Filter(self)
         QCoreApplication.instance().installNativeEventFilter(self._filter)
+        self._watch = QTimer(self, interval=30, timeout=self._space_up)
+
+    def _space_up(self):
+        if not _u32.GetAsyncKeyState(0x20) & 0x8000:
+            self._watch.stop()
+            self.released.emit()
 
 
 # ---------------------------------------------------------------- starting at login

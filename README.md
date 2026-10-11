@@ -13,7 +13,7 @@ A tiny pet on the bottom edge of your screen. Click it and talk to Claude Code i
 3. The first time you ask it something, a terminal opens and Claude Code asks whether to trust its folder (`~/Claude`): say yes
 
 Windows: if it says "Windows protected your PC", click **More info** → **Run anyway**.
-macOS and Linux haven't been tested yet. On macOS, Ctrl+Alt+Space needs the Accessibility permission.
+macOS and Linux haven't been tested yet. On macOS, Ctrl+Alt+Space needs the Accessibility permission; on Linux, voice input needs PortAudio (`libportaudio2`).
 
 Or run it from the source (Python 3.10+):
 
@@ -27,6 +27,7 @@ python -m venv .venv
 ## Features
 
 - Click it or press Ctrl+Alt+Space: a speech bubble to type to Claude Code, and its answer
+- Or hold Ctrl+Alt+Space (or click the mic) and talk: it's written into the bubble on your own computer, for you to check and send (a 480 MB speech model, downloaded the first time)
 - Claude sees the window you were in ("make this bigger") and can work in Adobe Illustrator
 - And in Autodesk Fusion: turn on **Preferences → General → API → Fusion MCP Server** there
 - It asks in the bubble before doing something; answer in your own words ("no, rename it instead")

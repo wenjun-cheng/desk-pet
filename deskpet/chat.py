@@ -17,8 +17,10 @@ from .claude.session import ClaudeSession
 from .pet import Pet
 from .settings import Settings
 from .strings import known, tool_label, tool_name, tr
+from .voice import Voice, joined
 
 log = logging.getLogger("pet")
+HOLD_MS = 250   # Ctrl+Alt+Space held this long listens; let go sooner, it's a press (the bubble out, or put away)
 NEW_CONVERSATION = ("/clear", "/reset", "/new")   # typed in the bubble: what New conversation does
 # Answers to a permission question, in plain words: a yes starts with one of these and has no "but" or "no" in it;
 # anything else is a no, and what was said goes to Claude ("不要删，改名成 old.bak")
@@ -55,7 +57,7 @@ class Chat(QObject):
     click: the conversation in a terminal. Answers, questions and errors wait in the bubble; only a permission
     question pops it up by itself."""
 
-    def __init__(self, pet: Pet, settings: Settings, make_session=ClaudeSession):
+    def __init__(self, pet: Pet, settings: Settings, make_session=ClaudeSession, make_voice=Voice):
         super().__init__()
         self.pet, self.settings = pet, settings
         self._make_session = make_session
@@ -86,6 +88,19 @@ class Chat(QObject):
         self.target_timer = QTimer(self, interval=300, timeout=self._track)
         self.target_timer.start()
 
+        self.voice = make_voice()
+        self.voice.heard.connect(self._on_heard)
+        self.voice.failed.connect(self._on_voice_failed)
+        self.voice.limit.timeout.connect(self.stop_listening)  # (talked for MAX_SECONDS: written down as is)
+        self.bubble.mic_tip = tr("mic")
+        self.bubble.mic_clicked.connect(self.mic)
+        self.bubble.voice_cancelled.connect(lambda: self.stop_listening(keep=False))
+        self.held = False           # Ctrl+Alt+Space is down
+        self.hold_opened = False    # ...and its press brought the bubble out
+        self.hold_listens = False   # ...and it has been held long enough to listen
+        self.hold_timer = QTimer(self, singleShot=True, interval=HOLD_MS, timeout=self._held_long)
+        self.before_model = None    # what the bubble said before it said the speech model is on its way
+
     # ------------------------------------------------------------ the pet's mood
 
     @property
@@ -95,8 +110,14 @@ class Chat(QObject):
 
     @property
     def thinking(self) -> bool:
-        """Claude is working on something the user asked (and isn't waiting for them)."""
-        return self.pending > 0 and not self.waiting
+        """Claude is working on something the user asked (and isn't waiting for them), or what the user said is
+        being written down."""
+        return (self.pending > 0 or self.voice.writing) and not self.waiting
+
+    @property
+    def listening(self) -> float | None:
+        """The user is talking to the pet: how loud."""
+        return self.voice.level() if self.voice.listening else None
 
     def _seen(self):
         """The bubble came up: what ! or the sweat drop was about shows."""
@@ -171,6 +192,8 @@ class Chat(QObject):
 
     def put_away(self):
         self.pet.call_off_jump()  # (a bubble still on its way doesn't open)
+        if self.voice.listening:
+            self.stop_listening(keep=False)
         self.bubble.collapse()
 
     def click(self):
@@ -208,6 +231,98 @@ class Chat(QObject):
 
     def language_changed(self):
         self.bubble.follow_up = tr("follow_up")
+        self.bubble.mic_tip = tr("mic")
+
+    # ------------------------------------------------------------ talking instead of typing
+
+    def hotkey_down(self):
+        """Ctrl+Alt+Space pressed: the bubble comes out at once (if it wasn't); held, it listens until let go
+        (from when the pet is out and the bubble up: see _held_long)."""
+        self.held = True
+        self.hold_listens = False
+        self.hold_opened = not (self.bubble.isVisible() or self.pet.jumping())
+        if self.hold_opened:
+            self.talk()
+        self.hold_timer.start()
+
+    def _held_long(self):
+        """Held long enough: it listens, once it has jumped out, landed and the bubble has popped up."""
+        if not self.held or self.voice.listening:
+            return
+        if self.pet.jumping() or not self.bubble.isVisible() or self.bubble.popping():
+            QTimer.singleShot(30, self._held_long)
+            return
+        self.hold_listens = self.listen()
+
+    def hotkey_up(self):
+        """Let go: what was said gets written down; a short press that didn't bring the bubble out puts it away."""
+        self.held = False
+        self.hold_timer.stop()
+        if self.hold_listens:
+            self.hold_listens = False
+            self.stop_listening()
+        elif not self.hold_opened:
+            self.put_away()
+
+    def mic(self):
+        """The bubble's mic: listen; clicked again (the stop button by then), done."""
+        if self.voice.listening:
+            self.stop_listening()
+        elif not self.voice.writing:
+            self.listen()
+
+    def listen(self) -> bool:
+        """The bubble out (if it isn't), a stop button at the end of its line; the pet listening (how loud shows
+        on it). The first time, the bubble says the speech model is being downloaded meanwhile (why it takes a
+        while)."""
+        if not self.voice.start():
+            return False
+        if not self.bubble.isVisible() and not self.pet.jumping():
+            self.talk()
+        self.bubble.set_placeholder(self._placeholder())  # (not "didn't catch that" from last time)
+        self.bubble.set_voice("listening")
+        if not self.voice.transcriber.downloaded() and self.before_model is None:
+            self.before_model = (self.bubble.message, self.bubble.kind, self.bubble.hint)
+            self._say(tr("getting_model"), "working")
+        return True
+
+    def stop_listening(self, keep: bool = True):
+        """keep: what was said goes to be written down; else it's dropped."""
+        if not keep:
+            self.voice.cancel()
+            self.bubble.set_voice("")
+            self._model_here()
+            return
+        self.voice.stop()
+        self.bubble.set_voice("writing" if self.voice.writing else "")
+
+    def _model_here(self):
+        """The first time's note about the model goes, and what the bubble said before comes back (unless
+        something else came meanwhile)."""
+        if self.before_model is None:
+            return
+        (message, kind, hint), self.before_model = self.before_model, None
+        if self.bubble.kind == "working" and self.bubble.message == tr("getting_model"):
+            if message:
+                self.bubble.say(message, kind, hint, pop=False)
+            else:
+                self.bubble.clear_message()
+
+    def _on_heard(self, text: str):
+        """Written down: after what was typed in the line, to check and send (Enter), or nothing heard."""
+        self.bubble.set_voice("")
+        self._model_here()
+        if text:
+            self.bubble.put_back(joined(self.bubble.line.toPlainText(), text))
+        elif not self.bubble.has_text():
+            self.bubble.set_placeholder(tr("heard_nothing"))
+        if self.bubble.input_open and self.bubble.isVisible():
+            self.bubble.focus_line()
+
+    def _on_voice_failed(self, problem: str):
+        self.bubble.set_voice("")
+        self.before_model = None
+        self._say(tr(problem) if known(problem) else problem, "error")
 
     # ------------------------------------------------------------ talking
 
@@ -246,7 +361,7 @@ class Chat(QObject):
     def new_topic(self):
         """New conversation: /clear in the bubble's session (if there's none yet, the next message starts one)."""
         self.bubble.clear_message()
-        self.bubble.line.setPlaceholderText(tr("ask"))
+        self.bubble.set_placeholder(tr("ask"))
         self._remember_session(None)
         self.session.new_topic()
 

@@ -1,6 +1,6 @@
 """The tests run the pet without touching the real desktop or Claude Code: its data and Claude Code's go to a
-temporary folder, Qt draws off screen (set DESKPET_TEST_SCREEN=1 to watch), and the mouse, the other windows and
-Claude are fakes."""
+temporary folder, Qt draws off screen (set DESKPET_TEST_SCREEN=1 to watch), and the mouse, the other windows,
+the microphone, Whisper and Claude are fakes."""
 import atexit
 import os
 import shutil
@@ -88,10 +88,47 @@ class FakeSession(QObject):
         self.replied.emit(text)
 
 
+class FakeRecorder:
+    """The microphone: a second of sound at a steady level (or no microphone at all: fails)."""
+    fails = False
+
+    def start(self):
+        if FakeRecorder.fails:
+            raise RuntimeError("Error querying device -1")
+
+    def level(self):
+        return 0.6
+
+    def stop(self):
+        import numpy as np
+        return np.zeros(16000, np.float32)
+
+
+class FakeTranscriber:
+    """Whisper: hears `text`."""
+
+    def __init__(self):
+        self.text = "make it wider"
+        self.ready = True
+
+    def downloaded(self):
+        return self.ready
+
+    def load(self):
+        pass
+
+    def forget_if_unused(self):
+        pass
+
+    def __call__(self, audio):
+        return self.text
+
+
 class World:
     def __init__(self, pet, chat, mouse):
         self.pet, self.chat, self.mouse = pet, chat, mouse
         self.bubble = chat.bubble
+        self.voice = chat.voice
 
     @property
     def claude(self) -> FakeSession:
@@ -106,6 +143,7 @@ def world(qapp, monkeypatch, tmp_path):
     from deskpet.pet import Pet
     from deskpet.settings import Settings
     from deskpet.strings import set_language
+    from deskpet.voice import Voice
 
     mouse = Mouse()
     monkeypatch.setattr(pet_module, "QCursor", mouse)
@@ -120,7 +158,8 @@ def world(qapp, monkeypatch, tmp_path):
     settings = Settings(tmp_path / "settings.json")
     settings["workspace"] = str(tmp_path / "work")
     pet = Pet(settings)
-    chat = Chat(pet, settings, make_session=FakeSession)
+    FakeRecorder.fails = False
+    chat = Chat(pet, settings, make_session=FakeSession, make_voice=lambda: Voice(FakeRecorder, FakeTranscriber()))
     pet.keep_out = lambda: chat.bubble.isVisible()
     pet.show()
     yield World(pet, chat, mouse)

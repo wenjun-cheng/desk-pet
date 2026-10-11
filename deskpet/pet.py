@@ -38,6 +38,7 @@ class Mood:
     happy_until: float = 0.0      # a reply came with the bubble open: ^ ^ for a moment
     error_until: float = 0.0      # something went wrong: x x until then, then a sweat drop...
     sweat_since: float | None = None   # ...until the bubble is opened or a message is sent
+    listening: float | None = None     # the user is talking to it: how loud, 0..1
 
 
 def work_area(screen) -> QRect:
@@ -201,8 +202,10 @@ class Pet(QWidget):
     # ------------------------------------------------------------ every frame
 
     def _check(self):
-        """Asleep after SLEEP_AFTER without the mouse or keyboard, unless Claude is working or waiting."""
-        asleep = desktop.idle_seconds() > SLEEP_AFTER and not self.mood.thinking and not self.mood.waiting
+        """Asleep after SLEEP_AFTER without the mouse or keyboard, unless Claude is working or waiting (or the
+        user is talking to it)."""
+        asleep = desktop.idle_seconds() > SLEEP_AFTER and not self.mood.thinking and not self.mood.waiting \
+            and self.mood.listening is None
         if asleep and not self.asleep:
             self.asleep = True
             self.frame_timer.setInterval(100)  # slow breathing needs fewer frames
@@ -334,7 +337,7 @@ class Pet(QWidget):
 
     def _look(self, t: float) -> face.Look:
         """What it looks like now: how it moves, and its face, from what's going on (the first that applies:
-        carried, dizzy, an error, jumping, waiting, working, stretching, asleep, happy, idle)."""
+        carried, dizzy, an error, jumping, listening, waiting, working, stretching, asleep, happy, idle)."""
         mood = self.mood
         look = face.Look(sink=self.sink, carried=self.carried())
         if self.jump_start is not None:
@@ -359,6 +362,8 @@ class Pet(QWidget):
             look.eyes = "cross"
         elif self.jump_start is not None or self.hop_start is not None:
             look.eyes = "happy"
+        elif mood.listening is not None:  # eyes shut, listening hard
+            look.eyes, look.sound = "closed", mood.listening
         elif mood.waiting:  # looking at you, the head tilting now and then
             look.eyes, look.look = ("closed", (0.0, 0.0)) if blink else ("open", self._toward_mouse())
             phase = (t - mood.waiting_since) % 4.0

@@ -33,7 +33,22 @@ def data_dir() -> Path:
     return base / APP
 
 
+def cache_dir() -> Path:
+    """Big downloads (the speech model): %LOCALAPPDATA%\\DeskPet, ~/Library/Caches/DeskPet or ~/.cache/DeskPet
+    (in DESKPET_DATA instead, if set)."""
+    if os.environ.get("DESKPET_DATA"):
+        return Path(os.environ["DESKPET_DATA"]) / "cache"
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return base / APP
+
+
 DATA = data_dir()
+MODELS = cache_dir() / "models"      # the speech model (voice.py)
 USAGE = DATA / "usage.json"          # the plan's limits (claude/usage.py)
 STATUS = DATA / "statusline"         # what Claude Code last gave the status line, per session (claude/statusline.py)
 TARGET = DATA / "target.json"        # the window the user means by "this" (claude/tools.py)

@@ -64,6 +64,19 @@ def test_bubble_grows_wider_then_taller(world):
     assert w.bubble.height() == capped  # it scrolls from there
 
 
+def test_scrolls_only_past_five_lines(world):
+    w = world
+    w.chat.toggle()
+    wait(450)
+    w.bubble.line.setPlainText("\n".join("line" for _ in range(5)))
+    assert w.bubble.scrolls == (False, False) and w.bubble.line.verticalScrollBar().maximum() == 0
+    five = w.bubble.line.height()
+    w.bubble.line.setPlainText("\n".join("line" for _ in range(6)))
+    assert w.bubble.scrolls == (False, True) and w.bubble.line.height() == five
+    w.chat._say("\n".join("reply" for _ in range(5)), "reply")
+    assert w.bubble.scrolls[0] is False
+
+
 def test_message_reply_and_mood(world):
     w = world
     w.chat.toggle()

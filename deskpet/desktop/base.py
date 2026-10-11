@@ -96,20 +96,39 @@ def pid_alive(pid: int) -> bool:
 
 
 class Hotkey(QObject):
-    """Ctrl+Alt+Space from anywhere: `pressed` (in Qt's thread). Through pynput where it's installed."""
+    """Ctrl+Alt+Space from anywhere: `pressed`, then `released` when Space is let go (in Qt's thread). Through
+    pynput where it's installed."""
     pressed = Signal()
+    released = Signal()
 
     def __init__(self):
         super().__init__()
         self.ok = False
+        self._down: set = set()
+        self._held = False
         try:
             from pynput import keyboard
-            self._listener = keyboard.GlobalHotKeys({"<ctrl>+<alt>+<space>": self.pressed.emit})
+            self._keys = keyboard.Key
+            self._listener = keyboard.Listener(on_press=self._press, on_release=self._release)
             self._listener.daemon = True
             self._listener.start()
             self.ok = True
         except Exception:  # not installed, or no way to listen (Wayland; macOS without permission)
             self._listener = None
+
+    def _press(self, key):
+        key = self._listener.canonical(key)
+        self._down.add(key)
+        if key == self._keys.space and {self._keys.ctrl, self._keys.alt} <= self._down and not self._held:
+            self._held = True
+            self.pressed.emit()
+
+    def _release(self, key):
+        key = self._listener.canonical(key)
+        self._down.discard(key)
+        if key == self._keys.space and self._held:
+            self._held = False
+            self.released.emit()
 
 
 # ---------------------------------------------------------------- starting at login

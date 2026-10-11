@@ -13,7 +13,7 @@
 3. 第一次问它问题时会打开一个终端，Claude Code 会问是否信任它的文件夹（`~/Claude`），选「是」
 
 Windows：如果提示「Windows 已保护你的电脑」，点「更多信息」→「仍要运行」。
-macOS 和 Linux 还没有实际测试过。macOS 上 Ctrl+Alt+Space 需要「辅助功能」权限。
+macOS 和 Linux 还没有实际测试过。macOS 上 Ctrl+Alt+Space 需要「辅助功能」权限；Linux 上语音输入需要 PortAudio（`libportaudio2`）。
 
 也可以从源码运行（Python 3.10 以上）：
 
@@ -27,6 +27,7 @@ python -m venv .venv
 ## 功能
 
 - 单击或按 Ctrl+Alt+Space：弹出对话气泡，输入给 Claude Code，回答也显示在里面
+- 也可以按住 Ctrl+Alt+Space（或点麦克风）直接说：在你自己的电脑上转成文字，放进气泡，你确认后再发送（第一次使用会下载约 480 MB 的语音模型）
 - Claude 能看到你刚才所在的窗口（「把这个放大」），还能直接操作 Adobe Illustrator
 - 也能在 Autodesk Fusion 里建模：在 Fusion 里打开 **Preferences → General → API → Fusion MCP Server**
 - 要做事之前会在气泡里问你，用自己的话回答就行（「别删，改名就好」）

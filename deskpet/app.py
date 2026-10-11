@@ -108,7 +108,7 @@ def main():
     from PySide6.QtGui import QFontDatabase, QIcon
     from PySide6.QtWidgets import QApplication
 
-    from . import desktop
+    from . import desktop, voice
     from .chat import Chat
     from .menu import PetMenu
     from .pet import Pet
@@ -140,7 +140,8 @@ def main():
     pet.keep_out = lambda: chat.bubble.isVisible() or menu.isVisible()
     server = _listen(pet, chat)  # noqa: F841  (held here so it lives as long as the app)
     hotkey = desktop.Hotkey()
-    hotkey.pressed.connect(chat.toggle)
+    hotkey.pressed.connect(chat.hotkey_down)
+    hotkey.released.connect(chat.hotkey_up)
     if not hotkey.ok:
         log.warning("Ctrl+Alt+Space isn't available (taken by another program, or not allowed here)")
     qapp.aboutToQuit.connect(chat.close)
@@ -150,6 +151,7 @@ def main():
         froze the pet on the first click or right-click: done now instead."""
         chat.bubble.warm_up()
         menu.warm_up()
+        threading.Thread(target=voice.prepare, name="voice", daemon=True).start()
     QTimer.singleShot(0, warm_up)
     usage_timer = QTimer(interval=USAGE_EVERY, timeout=lambda: _refresh_usage(chat.workspace))
     usage_timer.start()
