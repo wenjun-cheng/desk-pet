@@ -14,17 +14,43 @@ def _run(mode: str, given: bytes, timeout: float = 30) -> subprocess.CompletedPr
     return subprocess.run(paths.helper_argv(mode), input=given, capture_output=True, timeout=timeout)
 
 
-def test_tools():
-    messages = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-         "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}},
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-    ]
-    out = _run("mcp", b"".join(json.dumps(m).encode() + b"\n" for m in messages))
-    answers = [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
-    tools = next(a for a in answers if a.get("id") == 2)["result"]["tools"]
-    assert sorted(t["name"] for t in tools) == ["illustrator_script", "screenshot"], out.stderr.decode()
+def test_tools(tmp_path):
+    """Talked to the way Claude Code does: its input stays open while it answers (closing it right after the
+    questions can end the server before it does)."""
+    with open(tmp_path / "stderr", "w+b") as err:
+        proc = subprocess.Popen(paths.helper_argv("mcp"), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err)
+        watchdog = threading.Timer(60, proc.kill)
+        watchdog.start()
+
+        def ask(message: dict):
+            proc.stdin.write(json.dumps(message).encode() + b"\n")
+            proc.stdin.flush()
+
+        def answer(n: int) -> dict:
+            for line in proc.stdout:
+                if line.strip() and json.loads(line).get("id") == n:
+                    return json.loads(line)
+            return {}
+
+        tools = None
+        try:
+            ask({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                 "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                            "clientInfo": {"name": "t", "version": "1"}}})
+            if answer(1):
+                ask({"jsonrpc": "2.0", "method": "notifications/initialized"})
+                ask({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+                tools = answer(2).get("result", {}).get("tools")
+        except OSError:  # it ended (what it said is below)
+            pass
+        finally:
+            proc.stdin.close()
+            proc.wait(10)
+            watchdog.cancel()
+        err.seek(0)
+        said = err.read().decode("utf-8", "replace")
+    assert tools is not None, f"exit {proc.returncode}:\n{said}"
+    assert sorted(t["name"] for t in tools) == ["illustrator_script", "screenshot"], said
 
 
 def test_status_line():

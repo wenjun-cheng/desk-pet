@@ -71,6 +71,7 @@ class FakeClaude:
             self.state(self.dialog)
             time.sleep(session_module.WAIT_NOTICE + 2)
             self.state("busy")
+            time.sleep(1)  # (long enough for the session to see it's back to work before the turn ends)
         time.sleep(0.2)
         self.log({"type": "assistant", "message": {"content": [{"type": "text", "text": "Three things to do."}]}},
                  {"type": "system", "subtype": "turn_duration"})
