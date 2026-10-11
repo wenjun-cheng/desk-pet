@@ -17,6 +17,8 @@ _STRINGS = {  # key: (English, Chinese)
     "t_fetch": ("Reading a web page", "在看网页"),
     "t_shot": ("Looking at your screen", "在看你的屏幕"),
     "t_ai": ("Working in Illustrator", "在 Illustrator 里操作"),
+    "t_fusion": ("Working in Fusion", "在 Fusion 里操作"),
+    "t_fusion_look": ("Looking at Fusion", "在看 Fusion"),
     "t_other": ("Working on it", "在处理"),
     "in_box": ("Answer below", "在下面回答"),
     "permission": ("OK to use {tool}? {what}", "可以用 {tool} 吗？{what}"),
@@ -72,4 +74,16 @@ def tool_label(name: str, detail: str) -> str | None:
         return tr("t_edit", x=short)
     return tr({"Bash": "t_bash", "PowerShell": "t_bash", "Glob": "t_search", "Grep": "t_search",
                "WebSearch": "t_web", "WebFetch": "t_fetch", "mcp__pet__screenshot": "t_shot",
-               "mcp__pet__illustrator_script": "t_ai"}.get(name, "t_other"))
+               "mcp__pet__illustrator_script": "t_ai", "mcp__fusion__fusion_mcp_execute": "t_fusion",
+               "mcp__fusion__fusion_mcp_update": "t_fusion", "mcp__fusion__fusion_mcp_read": "t_fusion_look",
+               }.get(name, "t_other"))
+
+
+def tool_name(name: str) -> str:
+    """A tool the way the user knows it, for a permission question: Bash, Illustrator, Fusion, Google Drive…"""
+    if name == "mcp__pet__illustrator_script":
+        return "Illustrator"
+    if name.startswith("mcp__"):
+        server = name[5:].split("__")[0]
+        return {"fusion": "Fusion"}.get(server) or server.removeprefix("claude_ai_").replace("_", " ")
+    return name

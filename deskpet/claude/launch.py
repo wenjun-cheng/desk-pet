@@ -1,12 +1,13 @@
 """How the pet starts Claude Code: the background session the bubble talks to. What the pet adds to it goes on
 the command line, nothing in anyone's Claude Code settings is changed: its permission hook (questions in the
-bubble), its tools (screenshot, Illustrator), its status line (which records what the menu shows, then shows
+bubble), its tools (screenshot, Illustrator; and Fusion's own), its status line (which records what the menu shows, then shows
 the user's own), and how to answer in a bubble."""
 from __future__ import annotations
 
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -32,10 +33,16 @@ Context and tools:
 Illustrator. Read the document and selection first, then change them, in small focused scripts. Keep scripts ASCII \
 only (write \\u escapes) and avoid unparenthesized nested ternaries. The user undoes with Ctrl+Z, so you don't need to \
 ask before editing their artwork. If something can only be done through Illustrator's menus, give the steps briefly.
+- Autodesk Fusion: model in it with the mcp__fusion__ tools (Fusion's own MCP server). Begin each script with a \
+comment line saying what it does in a few words, in the user's language: the pet shows it when it asks the user. \
+Look at the result (a screenshot) before you say it's done. If the fusion server isn't connected, tell the user to \
+open Fusion with Preferences > General > API > Fusion MCP Server turned on, and to send /mcp reconnect fusion.
 - Don't operate apps by clicking around their interface; use scripts, commands and files.
 """
-TOOLS = ("mcp__pet__screenshot", "mcp__pet__illustrator_script")  # allowed without asking: looking is harmless,
-# and Illustrator undoes
+TOOLS = ("mcp__pet__screenshot", "mcp__pet__illustrator_script",  # allowed without asking: looking is harmless,
+         "mcp__fusion__fusion_mcp_read", "mcp__fusion__fusion_mcp_update")  # Illustrator undoes, and Fusion's
+# update is its undo and redo (its scripts are asked about: they can do anything)
+FUSION_PORT = 27182  # Fusion's MCP server, on this computer once it's turned on in Fusion's preferences
 BACKGROUNDED = re.compile(r"backgrounded\s*\S\s*([0-9a-f]{6,})")  # what `claude --bg` prints: the session's id
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
@@ -55,15 +62,25 @@ def config_args() -> list[str]:
         "statusLine": {"type": "command", "command": paths.shell_command(paths.helper_argv("statusline"))},
     }
     mcp = paths.helper_argv("mcp")
+    servers = {"pet": {"type": "stdio", "command": mcp[0], "args": mcp[1:]},
+               "fusion": {"type": "http", "url": f"http://127.0.0.1:{FUSION_PORT}/mcp"}}
     files = {"claude-settings.json": json.dumps(settings, indent=1),
-             "claude-mcp.json": json.dumps({"mcpServers": {"pet": {"type": "stdio", "command": mcp[0],
-                                                                    "args": mcp[1:]}}}, indent=1),
+             "claude-mcp.json": json.dumps({"mcpServers": servers}, indent=1),
              "claude-instructions.md": INSTRUCTIONS}
     for name, text in files.items():
         (paths.DATA / name).write_text(text, "utf-8")
     return ["--settings", str(paths.DATA / "claude-settings.json"),
             "--mcp-config", str(paths.DATA / "claude-mcp.json"),
             "--append-system-prompt-file", str(paths.DATA / "claude-instructions.md")]
+
+
+def fusion_open() -> bool:
+    """Fusion is running with its MCP server on."""
+    try:
+        socket.create_connection(("127.0.0.1", FUSION_PORT), timeout=0.3).close()
+        return True
+    except OSError:
+        return False
 
 
 def _run(args: list[str], cwd: Path, env: dict, timeout: float) -> subprocess.CompletedProcess:

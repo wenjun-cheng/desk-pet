@@ -5,9 +5,9 @@ import time
 import pytest
 
 from deskpet import paths
-from deskpet.chat import is_yes
+from deskpet.chat import is_yes, request_what
 from deskpet.claude import transcript, usage
-from deskpet.strings import set_language, tool_label, tr
+from deskpet.strings import set_language, tool_label, tool_name, tr
 
 
 @pytest.mark.parametrize("answer", ["y", "yes", "OK", "sure, go", "可以", "好的", "行", "嗯嗯", "没问题", "删吧", "允许"])
@@ -27,9 +27,21 @@ def test_tool_labels():
     assert tool_label("Bash", "ls") == tr("t_bash")
     assert tool_label("mcp__pet__screenshot", "") == tr("t_shot")
     assert tool_label("TodoWrite", "") is None
+    assert tool_label("mcp__fusion__fusion_mcp_execute", "") == "Working in Fusion"
     set_language("zh")
     assert tool_label("Edit", "/a/b.py") == "在改 b.py"
     set_language("en")
+
+
+def test_permission_wording():
+    assert tool_name("Bash") == "Bash"
+    assert tool_name("mcp__pet__illustrator_script") == "Illustrator"
+    assert tool_name("mcp__fusion__fusion_mcp_execute") == "Fusion"
+    assert tool_name("mcp__claude_ai_Google_Drive__search_files") == "Google Drive"
+    assert request_what({"command": "rm old.txt", "description": ""}) == "rm old.txt"
+    script = "import adsk.core\n\n# Make a 60 mm L-bracket\ndef run(_context: str):\n    pass\n"
+    assert request_what({"featureType": "script", "object": {"script": script}}) == "Make a 60 mm L-bracket"
+    assert request_what({"featureType": "document", "object": {"operation": "save"}}) == "document save"
 
 
 USAGE = """\

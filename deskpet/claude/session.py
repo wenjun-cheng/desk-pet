@@ -57,6 +57,7 @@ class ClaudeSession(QObject):
         self._relay: RelayLink | None = None         # the one the user opened
         self._relay_process: subprocess.Popen | None = None
         self._asked_trust = False
+        self._fusion_up = False              # Fusion's MCP server was there when last looked
         self._lock = threading.Lock()
         self._jobs: queue.Queue = queue.Queue()      # messages (str), _SHOW and _CLEAR, one at a time
         threading.Thread(target=self._work, name="claude", daemon=True).start()
@@ -210,13 +211,26 @@ class ClaudeSession(QObject):
                 return
         log.warning("/clear didn't start a new conversation")
 
+    def _connect_fusion(self):
+        """Fusion's MCP server, if it has come up since the pet last looked: Claude Code gives up on a server that
+        wasn't there when the session started, so it's told to connect again (before the message, quietly)."""
+        up = launch.fusion_open()
+        if up and not self._fusion_up:
+            log.info("Fusion is open: reconnecting its MCP server")
+            follower = transcript.Follower(transcript.transcript(self.session_id))
+            if type_message(self._console(), "/mcp reconnect fusion"):
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline and not any(
+                        transcript.command_output(e) for e in follower.new_entries(self.session_id)):
+                    time.sleep(0.3)
+        self._fusion_up = up
+
     def _ask(self, text: str):
         """Type the message into the session's terminal and follow the transcript until Claude has answered. A
         slash command's answer is what it prints; one that opens a menu in the terminal waits for the user there."""
         command = text.startswith("/")
         entry = self._session()
         self.pid, self.session_id = entry["pid"], entry["sessionId"]
-        follower = transcript.Follower(transcript.transcript(self.session_id))
         noticed = False
         while transcript.waiting(transcript.status(self.pid)):  # a dialog is up: wait until it's answered there
             if not noticed:
@@ -227,6 +241,9 @@ class ClaudeSession(QObject):
             time.sleep(0.5)
         if noticed:
             self.asking.emit("")
+        if not command:
+            self._connect_fusion()
+        follower = transcript.Follower(transcript.transcript(self.session_id))
         if not type_message(self._console(), text):
             raise RuntimeError("e_type")
         sent_at = time.monotonic()

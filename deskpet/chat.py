@@ -16,7 +16,7 @@ from .bubble import SpeechBubble
 from .claude.session import ClaudeSession
 from .pet import Pet
 from .settings import Settings
-from .strings import known, tool_label, tr
+from .strings import known, tool_label, tool_name, tr
 
 log = logging.getLogger("pet")
 NEW_CONVERSATION = ("/clear", "/reset", "/new")   # typed in the bubble: what New conversation does
@@ -34,6 +34,20 @@ def is_yes(answer: str) -> bool:
     elif not YES_START.match(text):
         return False
     return not NOT_QUITE.search(text)
+
+
+def request_what(given: dict) -> str:
+    """What a permission request is for, in a few words: its description, command, file…; for a Fusion script, its
+    first comment line (Claude is told to write one), else what kind of thing it does there."""
+    what = next((given[k] for k in ("description", "command", "file_path", "url", "pattern")
+                 if isinstance(given.get(k), str) and given[k]), "")
+    inner = given.get("object") if isinstance(given.get("object"), dict) else {}
+    if not what and isinstance(inner.get("script"), str):
+        what = next((line.strip().lstrip("#").strip() for line in inner["script"].splitlines()
+                     if line.strip().startswith("#") and line.strip().lstrip("#").strip()), "")
+    if not what and isinstance(given.get("featureType"), str):
+        what = " ".join(str(x) for x in (given["featureType"], inner.get("operation")) if x)
+    return what[:160]
 
 
 class Chat(QObject):
@@ -250,11 +264,10 @@ class Chat(QObject):
         log.info("Permission request for %s: asking in the bubble", request.get("tool_name"))
         self._permission = reply
         self.waiting_since = time.monotonic()
-        tool, given = request.get("tool_name", ""), request.get("tool_input") or {}
-        what = next((given[k] for k in ("description", "command", "file_path", "url", "pattern")
-                     if isinstance(given.get(k), str) and given[k]), "")
+        given = request.get("tool_input") or {}
         self.pet.hop()
-        self._say(tr("permission", tool=tool, what=what[:160]), "question", tr("in_box"))
+        self._say(tr("permission", tool=tool_name(request.get("tool_name", "")), what=request_what(given)), "question",
+                  tr("in_box"))
         self.bubble.open_input(tr("answer"))
 
     def permission_gone(self, reply):

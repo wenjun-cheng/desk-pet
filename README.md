@@ -28,6 +28,7 @@ python -m venv .venv
 
 - Click it or press Ctrl+Alt+Space: a speech bubble to type to Claude Code, and its answer
 - Claude sees the window you were in ("make this bigger") and can work in Adobe Illustrator
+- And in Autodesk Fusion: turn on **Preferences → General → API → Fusion MCP Server** there
 - It asks in the bubble before doing something; answer in your own words ("no, rename it instead")
 - Double-click: the whole conversation in a terminal
 - Right-click: model, context and plan usage, a new conversation, English or 中文

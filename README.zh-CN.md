@@ -28,6 +28,7 @@ python -m venv .venv
 
 - 单击或按 Ctrl+Alt+Space：弹出对话气泡，输入给 Claude Code，回答也显示在里面
 - Claude 能看到你刚才所在的窗口（「把这个放大」），还能直接操作 Adobe Illustrator
+- 也能在 Autodesk Fusion 里建模：在 Fusion 里打开 **Preferences → General → API → Fusion MCP Server**
 - 要做事之前会在气泡里问你，用自己的话回答就行（「别删，改名就好」）
 - 双击：在终端里打开完整对话
 - 右键：模型、上下文和额度用量，开新话题，English / 中文

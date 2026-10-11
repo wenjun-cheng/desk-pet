@@ -83,6 +83,7 @@ def claude_session(qapp, monkeypatch):
     from deskpet import desktop
     monkeypatch.setattr(desktop, "pid_alive", lambda pid: True)
     monkeypatch.setattr(session_module, "IDLE_DONE", 30)  # (ends by turn_duration in these tests)
+    monkeypatch.setattr(session_module.launch, "fusion_open", lambda: False)
 
     def make(fake: FakeClaude):
         s = session_module.ClaudeSession(TMP / "work", None, "bg1")
@@ -138,6 +139,19 @@ def test_waiting_in_the_terminal(claude_session, monkeypatch):
     s.send("tidy up")
     assert _until(lambda: heard["replied"], 12), heard
     assert heard["asking"] == ["waiting_for_permission", ""]
+
+
+def test_fusion_reconnected_once_it_opens(claude_session, monkeypatch):
+    fake = FakeClaude("sess-f")
+    s, heard = claude_session(fake)
+    s.send("hello")
+    assert _until(lambda: heard["replied"], 10), heard
+    monkeypatch.setattr(session_module.launch, "fusion_open", lambda: True)  # Fusion opened since
+    for text in ("make a bracket", "thanks"):
+        s.send(text)
+    assert _until(lambda: len(heard["replied"]) == 3, 15), heard
+    assert fake.received == ["hello", "/mcp reconnect fusion", "make a bracket", "thanks"]
+    assert heard["replied"] == ["Three things to do."] * 3  # (the reconnect's output isn't an answer)
 
 
 def test_failure_is_reported(claude_session, monkeypatch):
