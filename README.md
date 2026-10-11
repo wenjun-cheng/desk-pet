@@ -2,22 +2,33 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-A tiny desktop pet for Windows that opens Claude Code.
+A tiny pet on the bottom edge of your screen. Click it and talk to Claude Code in its speech bubble.
 
 ![Preview](docs/preview.png)
 
 ## Download
 
-1. Install [Claude Code](https://code.claude.com/docs/en/quickstart), so that `claude` runs in a terminal
-2. Download `DeskPet-x.y.z-win64.zip` from the [latest release](../../releases/latest)
-3. Unzip it and run `DeskPet.exe`
+1. Install [Claude Code](https://code.claude.com/docs/en/quickstart) and sign in, so that `claude` runs in a terminal
+2. Download the zip for your system from the [latest release](../../releases/latest), unzip it and run **DeskPet**
+3. The first time you ask it something, a terminal opens and Claude Code asks whether to trust its folder (`~/Claude`): say yes
 
-If Windows says "Windows protected your PC", click **More info** → **Run anyway**.
+Windows: if it says "Windows protected your PC", click **More info** → **Run anyway**.
+macOS and Linux haven't been tested yet. On macOS, Ctrl+Alt+Space needs the Accessibility permission.
+
+Or run it from the source (Python 3.10+):
+
+```
+git clone https://github.com/wenjun-cheng/desk-pet && cd desk-pet
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt     # Windows: .venv\Scripts\pip install -r requirements.txt
+.venv/bin/python run.py                       # Windows: .venv\Scripts\pythonw run.py
+```
 
 ## Features
 
-- Peeks up from the bottom of the screen and comes out when the mouse is near
-- Click: go to your open Claude Code window, or open one
-- Double-click: open a new Claude Code window
-- Drag it anywhere along the bottom edge
-- Hides during full-screen apps; touch the bottom edge near it to call it back
+- Click it or press Ctrl+Alt+Space: a speech bubble to type to Claude Code, and its answer
+- Claude sees the window you were in ("make this bigger") and can work in Adobe Illustrator
+- It asks in the bubble before doing something; answer in your own words ("no, rename it instead")
+- Double-click: the whole conversation in a terminal
+- Right-click: model, context and plan usage, a new conversation, English or 中文
+- Drag it anywhere along the bottom edge; it naps while you're away

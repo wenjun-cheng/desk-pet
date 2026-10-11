@@ -1,1 +1,11 @@
+# Desk Pet runs on Python 3.10 or newer. The versions are the ones it was tested with (on Windows 11).
 PySide6-Essentials==6.11.2
+pyte==0.8.2
+mcp==2.3.0
+Pillow==12.3.0
+pywinpty==3.0.5; sys_platform == "win32"
+pywin32==312; sys_platform == "win32"
+tzdata==2026.5; sys_platform == "win32"
+ptyprocess>=0.7; sys_platform != "win32"
+pynput>=1.7; sys_platform != "win32"
+pyobjc-framework-Quartz>=10; sys_platform == "darwin"

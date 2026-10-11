@@ -1,6 +1,6 @@
 .venv/
 __pycache__/
+.pytest_cache/
 build/
 dist/
-*.spec
 *.lnk
