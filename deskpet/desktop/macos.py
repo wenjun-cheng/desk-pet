@@ -34,6 +34,9 @@ def own_window(window_id: int):
     """Not a window the system moves or arranges: dragging the pet to a side of the screen offered to tile it
     over half the screen, and it could end up off the bottom edge. So: not movable by the system, and a helper
     window (on every Space, outside Mission Control, Cmd+Tab, Stage Manager and tiling)."""
+    from PySide6.QtGui import QGuiApplication
+    if QGuiApplication.platformName() != "cocoa":  # (off screen, in the tests, the id isn't an NSView)
+        return
     try:
         import objc
         window = objc.objc_object(c_void_p=window_id).window()  # (Qt's window id is the NSView)
