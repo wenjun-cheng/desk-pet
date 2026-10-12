@@ -323,6 +323,10 @@ class Pet(QWidget):
 
     # ------------------------------------------------------------ drawing
 
+    def showEvent(self, e):
+        super().showEvent(e)
+        desktop.own_window(int(self.winId()))
+
     def paintEvent(self, _):
         p = QPainter(self)
         if self.drag_offset is not None:  # all of the window takes the mouse while it's carried (see _follow_mouse)

@@ -30,6 +30,26 @@ def setup_app():
         pass
 
 
+def own_window(window_id: int):
+    """Not a window the system moves or arranges: dragging the pet to a side of the screen offered to tile it
+    over half the screen, and it could end up off the bottom edge. So: not movable by the system, and a helper
+    window (on every Space, outside Mission Control, Cmd+Tab, Stage Manager and tiling)."""
+    try:
+        import objc
+        window = objc.objc_object(c_void_p=window_id).window()  # (Qt's window id is the NSView)
+        if window is None:
+            return
+        window.setMovable_(False)
+        behavior = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)  # CanJoinAllSpaces, Stationary, IgnoresCycle,
+        # FullScreenAuxiliary
+        try:
+            window.setCollectionBehavior_(behavior | (1 << 17))  # Auxiliary (macOS 13): no Stage Manager, tiling
+        except Exception:
+            window.setCollectionBehavior_(behavior)
+    except Exception:  # (pyobjc missing: as it was)
+        pass
+
+
 def _front_window() -> dict | None:
     """The frontmost app's top window, from Quartz's window list (titles need the Screen Recording permission)."""
     if Quartz is None:

@@ -181,9 +181,20 @@ def _shown(hwnd) -> bool:
     return bool(_u32.IsWindowVisible(hwnd)) and not cloaked.value
 
 
+IME_CLASSES = ("candidate", "msctfime", ".ime.", "ime ui", "sopy", "qqpinyin", "baiduime")  # (in the class name)
+IME_PROGRAMS = {"textinputhost.exe", "chsime.exe", "ctfmon.exe", "inputapp.exe"}  # (Windows' own input methods)
+
+
+def _input_method(hwnd: int) -> bool:
+    """A window of an input method (its candidate list, say)."""
+    cls = _class_name(hwnd).lower()
+    return cls == "ime" or any(k in cls for k in IME_CLASSES) or _program(_pid(hwnd)).lower() in IME_PROGRAMS
+
+
 def _covered(hwnd: int, ours: set[int]) -> str:
     """What's over one of our windows: "" nothing; "screen" something over the whole screen it's on (a
-    screenshot tool's overlay, a full-screen video); "window" something else (the taskbar, say)."""
+    screenshot tool's overlay, a full-screen video); "ime" an input method's window (its candidate list:
+    typing in the bubble, it has to stay over it); "window" something else (the taskbar, say)."""
     me = _rect(hwnd)
     info = _MonitorInfo(cbSize=ctypes.sizeof(_MonitorInfo))
     _u32.GetMonitorInfoW(_u32.MonitorFromWindow(hwnd, 2), ctypes.byref(info))  # MONITOR_DEFAULTTONEAREST
@@ -195,6 +206,8 @@ def _covered(hwnd: int, ours: set[int]) -> str:
             if r.left <= screen.left and r.top <= screen.top and r.right >= screen.right and r.bottom >= screen.bottom:
                 return "screen"
             if r.left < me.right and r.right > me.left and r.top < me.bottom and r.bottom > me.top:
+                if _input_method(above):
+                    return "ime"
                 found = "window"
         above = _u32.GetWindow(above, 3)
     return found
@@ -203,10 +216,11 @@ def _covered(hwnd: int, ours: set[int]) -> str:
 def keep_on_top(window_ids: list[int]):
     """Above everything, the taskbar included (it comes up over the pet when the mouse reaches the bottom of the
     screen): when something gets over our windows, they go back on top. But not over what covers the whole
-    screen (a screenshot tool's overlay, a full-screen video: those are meant to be on top)."""
+    screen (a screenshot tool's overlay, a full-screen video: those are meant to be on top), nor while an input
+    method's candidate list is over them."""
     ours = set(window_ids)
     covers = {_covered(w, ours) for w in window_ids}
-    if "window" in covers and "screen" not in covers:
+    if "window" in covers and not covers & {"screen", "ime"}:
         for w in window_ids:
             _u32.SetWindowPos(w, HWND_TOPMOST, 0, 0, 0, 0, SWP_STAY)
 

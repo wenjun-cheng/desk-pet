@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-__all__ = ["setup_app", "foreground", "is_work_window", "describe", "window_exists", "window_rect", "screenshot",
+__all__ = ["setup_app", "own_window", "foreground", "is_work_window", "describe", "window_exists", "window_rect", "screenshot",
            "bring_to_front", "give_focus", "restore_focus", "keep_on_top", "mouse_button_down", "idle_seconds",
            "pid_alive", "Hotkey", "autostart_enabled", "set_autostart", "open_terminal", "terminal_window",
            "run_illustrator", "AUTOSTART_LABEL"]
@@ -20,6 +20,11 @@ AUTOSTART_LABEL = "autostart"
 
 def setup_app():
     """Once the app has started: whatever the platform needs for a little app that lives on the desktop."""
+
+
+def own_window(window_id: int):
+    """One of the pet's windows (the pet, its bubble), once shown: whatever keeps the system from treating it as
+    an ordinary window."""
 
 
 # ---------------------------------------------------------------- other programs' windows

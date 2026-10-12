@@ -503,6 +503,7 @@ class SpeechBubble(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
+        desktop.own_window(int(self.winId()))
         self.shown.emit()
 
     # ------------------------------------------------------------ input
