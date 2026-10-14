@@ -75,6 +75,7 @@ def test_the_mic_starts_and_stops(world):
     w.chat.toggle()
     wait(450)
     mic = w.bubble._mic_center()
+    mic += type(mic)(w.bubble.ROOM, w.bubble.ROOM)  # (in the window)
     assert w.bubble._on_mic(mic) and not w.bubble._on_mic(mic + type(mic)(0, 40))
     w.bubble.line.setPlainText("把它")
     w.voice.transcriber.text = "改宽一点"

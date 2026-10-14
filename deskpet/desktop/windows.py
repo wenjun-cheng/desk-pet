@@ -2,10 +2,12 @@
 (RegisterHotKey), starting at login (the Run key), terminals (Windows Terminal or the console), Illustrator (COM)."""
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import os
 import subprocess
 import threading
+import time
 import winreg
 from ctypes import wintypes
 from pathlib import Path
@@ -311,7 +313,8 @@ def open_terminal(argv: list[str], cwd: Path, env: dict) -> subprocess.Popen | N
 
 
 def terminal_window(pid: int) -> int:
-    """Windows Terminal's window (it owns the console's hidden pseudo-window), or the old console's own."""
+    """Windows Terminal's window (it owns the console's hidden pseudo-window), or the old console's own; 0: none.
+    (This lets go of the pet's own console: see console_for_pty.)"""
     with _console_lock:
         _k32.FreeConsole()
         if not _k32.AttachConsole(pid):
@@ -320,7 +323,30 @@ def terminal_window(pid: int) -> int:
             hwnd = _k32.GetConsoleWindow()
         finally:
             _k32.FreeConsole()
-    return (_u32.GetWindow(hwnd, 4) or hwnd) if hwnd else 0  # GW_OWNER
+    return (_u32.GetWindow(hwnd, 4) or hwnd) if hwnd else 0  # GW_OWNER (a hidden pseudo-window can be what's
+    # found: shown, Windows Terminal brings its own to the front)
+
+
+@contextlib.contextmanager
+def console_for_pty():
+    """While starting a program in a pseudo-console: the pet has a console of its own. ConPTY needs one, and the
+    pet has none (pythonw, or the built app), so Windows made one, with a window, which flashed up each time the
+    pet started Claude's terminal. Instead it borrows one with no window: a short-lived child's, made with
+    CREATE_NO_WINDOW (it stays once attached; terminal_window lets go of it, so it may be needed again)."""
+    with _console_lock:
+        if not _k32.GetConsoleCP():  # (no console)
+            child = subprocess.Popen(["cmd.exe", "/c", "ping -n 5 127.0.0.1 >nul"],
+                                     creationflags=subprocess.CREATE_NO_WINDOW, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                for _ in range(200):
+                    if _k32.AttachConsole(child.pid):
+                        _k32.SetConsoleCtrlHandler(None, True)  # (no Ctrl+C from it)
+                        break
+                    time.sleep(0.01)
+            finally:
+                child.kill()
+        yield
 
 
 def run_illustrator(script: str) -> str:

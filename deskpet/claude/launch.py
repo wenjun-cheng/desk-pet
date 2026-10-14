@@ -4,6 +4,7 @@ bubble), its tools (screenshot, Illustrator; and Fusion's own), its status line 
 the user's own), and how to answer in a bubble."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -45,29 +46,49 @@ TOOLS = ("mcp__pet__screenshot", "mcp__pet__illustrator_script",  # allowed with
 FUSION_PORT = 27182  # Fusion's MCP server, on this computer once it's turned on in Fusion's preferences
 BACKGROUNDED = re.compile(r"backgrounded\s*\S\s*([0-9a-f]{6,})")  # what `claude --bg` prints: the session's id
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+STAMP = "claude-config.sha256"  # the additions the background session was started with (see config_current)
 
 
 class NotTrusted(RuntimeError):
     """Claude Code hasn't been told yet that it can trust its folder: running `claude` there once asks."""
 
 
-def config_args() -> list[str]:
-    """The pet's additions to a session, written to files in its data folder (with the paths of this copy of the
-    pet, so moving it keeps them right), as command-line options."""
-    paths.DATA.mkdir(parents=True, exist_ok=True)
+def _config_files() -> dict[str, str]:
+    """The pet's additions to a session: file name, text."""
+    hook = [{"type": "command", "command": paths.shell_command(paths.helper_argv("hook")), "timeout": 600}]
     settings = {
-        "hooks": {"PermissionRequest": [{"matcher": "*", "hooks": [
-            {"type": "command", "command": paths.shell_command(paths.helper_argv("hook")), "timeout": 600}]}]},
+        # permission questions, and Claude's multiple-choice questions (answered in the bubble: see hook.py)
+        "hooks": {"PermissionRequest": [{"matcher": "*", "hooks": hook}],
+                  "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": hook}]},
         "permissions": {"allow": list(TOOLS)},
         "statusLine": {"type": "command", "command": paths.shell_command(paths.helper_argv("statusline"))},
     }
     mcp = paths.helper_argv("mcp")
     servers = {"pet": {"type": "stdio", "command": mcp[0], "args": mcp[1:]},
                "fusion": {"type": "http", "url": f"http://127.0.0.1:{FUSION_PORT}/mcp"}}
-    files = {"claude-settings.json": json.dumps(settings, indent=1),
-             "claude-mcp.json": json.dumps({"mcpServers": servers}, indent=1),
-             "claude-instructions.md": INSTRUCTIONS}
-    for name, text in files.items():
+    return {"claude-settings.json": json.dumps(settings, indent=1),
+            "claude-mcp.json": json.dumps({"mcpServers": servers}, indent=1),
+            "claude-instructions.md": INSTRUCTIONS}
+
+
+def _fingerprint() -> str:
+    return hashlib.sha256("\0".join(_config_files().values()).encode("utf-8")).hexdigest()
+
+
+def config_current() -> bool:
+    """Whether the background session was started with the pet's additions as they are now (Claude Code reads
+    hooks and the rest only when a session starts: a session from before a change doesn't have it)."""
+    try:
+        return (paths.DATA / STAMP).read_text("utf-8") == _fingerprint()
+    except OSError:
+        return False
+
+
+def config_args() -> list[str]:
+    """The pet's additions to a session, written to files in its data folder (with the paths of this copy of the
+    pet, so moving it keeps them right), as command-line options."""
+    paths.DATA.mkdir(parents=True, exist_ok=True)
+    for name, text in _config_files().items():
         (paths.DATA / name).write_text(text, "utf-8")
     return ["--settings", str(paths.DATA / "claude-settings.json"),
             "--mcp-config", str(paths.DATA / "claude-mcp.json"),
@@ -107,7 +128,13 @@ def start_background(cwd: Path, env: dict, session_id: str | None) -> str:
     found = BACKGROUNDED.search(said)
     if not found:
         raise RuntimeError(f"claude --bg said: {said.strip()[:300]}")
+    (paths.DATA / STAMP).write_text(_fingerprint(), "utf-8")
     return found.group(1)
+
+
+def stop_background(cwd: Path, env: dict, background_id: str):
+    """Stops it (its conversation is kept, to resume)."""
+    run_claude(["stop", background_id], cwd, env)
 
 
 def agents(cwd: Path, env: dict) -> list[dict]:

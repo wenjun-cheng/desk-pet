@@ -61,7 +61,7 @@ def test_status_line():
     assert json.loads((paths.STATUS / "status-test.json").read_text("utf-8"))["session_id"] == "status-test"
 
 
-def _hook(qapp, decide):
+def _hook(qapp, decide, request=None):
     """Runs the hook with a permission request, the pet's server answering with decide(request)."""
     server = QLocalServer()
     QLocalServer.removeServer(paths.SERVER_NAME)
@@ -80,8 +80,8 @@ def _hook(qapp, decide):
                 sock.flush()
         sock.readyRead.connect(read)
     server.newConnection.connect(on_connection)
-    request = {"session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash",
-               "tool_input": {"command": "rm old.txt"}}
+    request = request or {"session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash",
+                          "tool_input": {"command": "rm old.txt"}}
     result = {}
     thread = threading.Thread(target=lambda: result.update(out=_run("hook", json.dumps(request).encode())))
     thread.start()
@@ -97,6 +97,19 @@ def test_hook_asks_the_pet(qapp):
     answer = json.loads(out.stdout)
     assert answer == {"hookSpecificOutput": {"hookEventName": "PermissionRequest",
                                              "decision": {"behavior": "deny", "message": "rename it instead"}}}
+
+
+def test_hook_answers_questions(qapp):
+    given = {"questions": [{"question": "Which?", "header": "Kind", "options": [{"label": "A"}, {"label": "B"}],
+                            "multiSelect": False}]}
+    request = {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+               "tool_input": given}
+    got, out = _hook(qapp, lambda r: {"behavior": "allow", "updatedInput": {**given, "answers": {"Which?": "B"}}},
+                     request)
+    assert got[0]["hook_event_name"] == "PreToolUse"
+    assert json.loads(out.stdout) == {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "allow",
+        "updatedInput": {**given, "answers": {"Which?": "B"}}}}
 
 
 def test_hook_leaves_it_to_the_terminal(qapp):

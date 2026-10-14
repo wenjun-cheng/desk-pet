@@ -52,6 +52,8 @@ def request_what(given: dict) -> str:
     return what[:160]
 
 
+SKIPPED = "(The user skipped this question.)"  # the answer to a question skipped in the bubble
+
 class Chat(QObject):
     """Click the pet or press Ctrl+Alt+Space: it jumps out with the bubble to type in (or puts it away). Double
     click: the conversation in a terminal. Answers, questions and errors wait in the bubble; only a permission
@@ -67,8 +69,9 @@ class Chat(QObject):
         self.happy_until = self.error_until = 0.0
         self.sweat_since: float | None = None
         self.pending = 0            # messages sent to Claude and not answered yet
-        self.in_terminal = False    # Claude waits for the user in a terminal (the bubble's own: _permission)
+        self._in_terminal = False   # Claude waits for the user in a terminal (see in_terminal)
         self._permission = None     # replies to the permission question shown in the bubble (see ask_permission)
+        self._quiz: dict | None = None   # ...or to Claude's multiple-choice questions there (see _ask_questions)
         self.open_before_click: bool | None = None   # (a double click undoes what its first click did)
         self.bubble_on_drag: bool | None = None      # the bubble showed when the pet was picked up (with its line?)
         self.target = 0             # the window the user was working in last (what "this" means to Claude)
@@ -94,14 +97,34 @@ class Chat(QObject):
         self.voice.limit.timeout.connect(self.stop_listening)  # (talked for MAX_SECONDS: written down as is)
         self.bubble.mic_tip = tr("mic")
         self.bubble.mic_clicked.connect(self.mic)
+        self.bubble.chosen.connect(self._choose)
+        self.bubble.link.connect(self._quiz_link)
         self.bubble.voice_cancelled.connect(lambda: self.stop_listening(keep=False))
         self.held = False           # Ctrl+Alt+Space is down
         self.hold_opened = False    # ...and its press brought the bubble out
         self.hold_listens = False   # ...and it has been held long enough to listen
         self.hold_timer = QTimer(self, singleShot=True, interval=HOLD_MS, timeout=self._held_long)
         self.before_model = None    # what the bubble said before it said the speech model is on its way
+        if settings["session"] and settings["reply"]:  # the conversation carries on: so does its last answer
+            self.bubble.away = True
+            self.bubble.say(settings["reply"], "reply", pop=False)
 
     # ------------------------------------------------------------ the pet's mood
+
+    @property
+    def in_terminal(self) -> bool:
+        """Claude waits for the user in a terminal (the bubble's own question: _permission). Meanwhile the line
+        is locked, and says where to answer (typing in it went nowhere)."""
+        return self._in_terminal
+
+    @in_terminal.setter
+    def in_terminal(self, waiting: bool):
+        if waiting != self._in_terminal:
+            self._in_terminal = waiting
+            if waiting and self.voice.listening:
+                self.stop_listening(keep=False)
+            self.bubble.set_locked(waiting)
+            self.bubble.set_placeholder(self._placeholder())
 
     @property
     def waiting(self) -> bool:
@@ -164,6 +187,10 @@ class Chat(QObject):
         self.bubble.point_at(*self.pet.tail_tip())
 
     def _placeholder(self) -> str:
+        if self.in_terminal:
+            return tr("answer_there") if self.bubble.message == tr("trust") else tr("open_terminal")
+        if self._quiz is not None:
+            return tr("own_answer")
         if self._permission is not None:
             return tr("answer")
         return tr("follow_up") if self.bubble.message else tr("ask")
@@ -247,7 +274,7 @@ class Chat(QObject):
 
     def _held_long(self):
         """Held long enough: it listens, once it has jumped out, landed and the bubble has popped up."""
-        if not self.held or self.voice.listening:
+        if not self.held or self.voice.listening or self.in_terminal:
             return
         if self.pet.jumping() or not self.bubble.isVisible() or self.bubble.popping():
             QTimer.singleShot(30, self._held_long)
@@ -266,6 +293,8 @@ class Chat(QObject):
 
     def mic(self):
         """The bubble's mic: listen; clicked again (the stop button by then), done."""
+        if self.in_terminal:  # (the line is locked: answers go to the terminal)
+            return
         if self.voice.listening:
             self.stop_listening()
         elif not self.voice.writing:
@@ -327,6 +356,14 @@ class Chat(QObject):
     # ------------------------------------------------------------ talking
 
     def _submit(self, text: str):
+        if self._quiz is not None:  # an answer of one's own (or, "", the choices ticked)
+            if text.strip().lower() in ("skip", tr("skip_words")):
+                self._answer(SKIPPED)
+                return
+            q = self._question()
+            labels = [q["options"][i].get("label", "") for i in sorted(self.bubble.picked)]
+            self._answer(text or (labels if q.get("multiSelect") else labels[0]))
+            return
         if self._permission is not None:  # the answer to the permission question in the bubble
             reply, self._permission = self._permission, None
             reply({"behavior": "allow"} if is_yes(text) else
@@ -363,18 +400,26 @@ class Chat(QObject):
         self.bubble.clear_message()
         self.bubble.set_placeholder(tr("ask"))
         self._remember_session(None)
+        self.settings.set("reply", None)
         self.session.new_topic()
 
     # ------------------------------------------------------------ permission questions
 
     def ask_permission(self, request: dict, reply):
-        """Claude Code is about to ask for permission (its PermissionRequest hook, claude/hook.py, passed it on).
-        In the conversation the bubble is following, ask here and reply({...}) with the user's answer;
-        otherwise reply(None) at once, and the terminal shows its usual prompt."""
+        """Claude Code is about to ask for permission (its PermissionRequest hook, claude/hook.py, passed it on),
+        or to ask the user questions (AskUserQuestion, through its PreToolUse hook). In the conversation the bubble
+        is following, ask here and reply({...}) with the user's answer; otherwise reply(None) at once, and the
+        terminal shows its usual prompt."""
         c = self._session
-        if c is None or not c.busy or request.get("session_id") != c.session_id or self._permission is not None:
-            log.info("Permission request for %s: left to its terminal", request.get("tool_name"))
+        tool = request.get("tool_name", "")
+        questions = request.get("hook_event_name") == "PreToolUse"
+        if c is None or not c.busy or request.get("session_id") != c.session_id or self._permission is not None \
+                or questions != (tool == "AskUserQuestion"):  # (questions are asked through PreToolUse only)
+            log.info("Permission request for %s: left to its terminal", tool)
             reply(None)
+            return
+        if questions:
+            self._ask_questions(request.get("tool_input") or {}, reply)
             return
         log.info("Permission request for %s: asking in the bubble", request.get("tool_name"))
         self._permission = reply
@@ -389,6 +434,7 @@ class Chat(QObject):
         """The hook stopped waiting (it timed out, or the request was dealt with elsewhere)."""
         if self._permission is reply:
             self._permission = None
+            self._end_quiz()
             if self.bubble.kind == "question":
                 self._say(tr("thinking"), "working", pop=False)
 
@@ -397,10 +443,90 @@ class Chat(QObject):
         own prompt there instead, and the bubble says so."""
         if self._permission is not None:
             reply, self._permission = self._permission, None
+            self._end_quiz()
             reply(None)
             if to_terminal:  # (it waits there now)
+                self._say(tr("in_terminal"), "question", pop=False)
                 self.in_terminal = True
-                self._say(tr("in_terminal"), "question", tr("click_me"), pop=False)
+
+    # ------------------------------------------------------------ Claude's multiple-choice questions
+
+    def _ask_questions(self, given: dict, reply):
+        """One question at a time: its options to click (or press its number), or an answer of one's own typed
+        or said. Once all are answered, Claude gets the answers (as if picked in its terminal)."""
+        questions = [q for q in given.get("questions") or [] if q.get("question")]
+        if not questions:
+            reply(None)
+            return
+        log.info("Claude asks %d question(s): in the bubble", len(questions))
+        self._permission = reply
+        self._quiz = {"input": given, "questions": questions, "answers": {}, "index": 0}
+        self.waiting_since = time.monotonic()
+        self.pet.hop()
+        self._show_question()
+
+    def _question(self) -> dict:
+        return self._quiz["questions"][self._quiz["index"]]
+
+    def _show_question(self):
+        """The question, with what was answered to it before (gone back to): picked, or in the line."""
+        q, total = self._question(), len(self._quiz["questions"])
+        multi = bool(q.get("multiSelect"))
+        labels = [o.get("label", "") for o in q.get("options") or []]
+        before = self._quiz["answers"].get(q["question"])
+        chosen = before if isinstance(before, list) else [before] if before in labels else []
+        own = before if isinstance(before, str) and before not in labels else ""
+        hint = " · ".join(part for part in (q.get("header", ""), tr("question_n", n=self._quiz["index"] + 1,
+                                                                    total=total) if total > 1 else "",
+                                            tr("pick_many" if multi else "pick_one")) if part)
+        self.bubble.set_choices([(o.get("label", ""), o.get("description", "")) for o in q.get("options") or []],
+                                multi, {labels.index(c) for c in chosen if c in labels},
+                                ([("back", "‹")] if self._quiz["index"] else []) + [("skip", "›")],
+                                tr("keys_many" if multi else "keys_one"))
+        self._say(q["question"], "question", hint)
+        self.bubble.put_back(own)
+        self.bubble.open_input(tr("own_answer"))
+
+    def _choose(self, i: int):
+        """An option clicked (or Space on it): ticked (where only one can be, instead of the one before;
+        where several can be, or unticked). Enter answers."""
+        if self._quiz is None:
+            return
+        multi = bool(self._question().get("multiSelect"))
+        self.bubble.set_choices(self.bubble.choices, multi, self.bubble.picked ^ {i} if multi else {i},
+                                self.bubble.links, self.bubble.keys_help)
+        self.bubble.go_to(i)
+
+    def _quiz_link(self, key: str):
+        """Back to the question before, or skip this one (Claude is told so: left out, it asks again)."""
+        if self._quiz is None:
+            return
+        if key == "back" and self._quiz["index"] > 0:
+            self._quiz["index"] -= 1
+            self._show_question()
+        elif key == "skip":
+            self.bubble.line.clear()
+            self._answer(SKIPPED)
+
+    def _answer(self, answer):
+        """answer: the option's label, the labels picked, or the user's own words."""
+        quiz = self._quiz
+        quiz["answers"][self._question()["question"]] = answer
+        quiz["index"] += 1
+        if quiz["index"] < len(quiz["questions"]):
+            self._show_question()
+            return
+        reply, self._permission = self._permission, None
+        self._end_quiz()
+        log.info("Answered Claude's questions in the bubble")
+        reply({"behavior": "allow", "updatedInput": {**quiz["input"], "answers": quiz["answers"]}})
+        self.bubble.set_placeholder(tr("follow_up"))
+        self._say(tr("thinking"), "working")
+
+    def _end_quiz(self):
+        if self._quiz is not None:
+            self._quiz = None
+            self.bubble.set_choices([])
 
     # ------------------------------------------------------------ from the session
 
@@ -427,9 +553,9 @@ class Chat(QObject):
         exe = paths.claude_exe()
         if exe:
             desktop.open_terminal([exe], self.session.cwd, self.session.env)
+        self._say(tr("trust"), "question")
         self.in_terminal = True
         self.waiting_since = time.monotonic()
-        self._say(tr("trust"), "question")
 
     def _on_reply(self, text: str):
         """The answer: in the bubble if it's open (^ ^ for a moment); if it's put away, it waits there, and the
@@ -443,6 +569,7 @@ class Chat(QObject):
         else:
             self.done = True
         self._say(text or tr("no_text"), "reply", pop=False)
+        self.settings.set("reply", text or None)
 
     def _on_question(self, state: str):
         """Claude is waiting for the user in the terminal (a dialog the bubble isn't asking about itself): that's
@@ -453,7 +580,8 @@ class Chat(QObject):
         if self._permission is not None:
             return
         if state:
-            self._say(tr("in_terminal"), "question", tr("click_me"))
+            self._say(tr("in_terminal"), "question")
+            self.bubble.set_placeholder(self._placeholder())
         elif self.bubble.kind == "question":
             self._say(tr("thinking"), "working", pop=False)
 

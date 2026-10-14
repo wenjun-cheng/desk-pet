@@ -1,7 +1,9 @@
-"""Claude Code's PermissionRequest hook in the bubble's sessions (see launch.py). It passes the request to the
-running pet, which asks in the bubble, and answers Claude Code with the user's reply. If the pet isn't running,
-or leaves it to the terminal (another conversation; the user went there), it prints nothing, and the terminal
-shows its usual prompt."""
+"""Claude Code's PermissionRequest hook in the bubble's sessions (see launch.py), and its PreToolUse hook for
+AskUserQuestion (Claude's multiple-choice questions). It passes the request to the running pet, which asks in
+the bubble, and answers Claude Code with the user's reply: allowed, denied, or (a question) allowed with the
+answers in the tool's input, which Claude takes instead of asking in the terminal. If the pet isn't running, or
+leaves it to the terminal (another conversation; the user went there), it prints nothing, and the terminal shows
+its usual prompt."""
 from __future__ import annotations
 
 import json
@@ -32,6 +34,12 @@ def main():
         decision = json.loads(answer.split(b"\n", 1)[0].decode("utf-8")).get("decision")
     except ValueError:
         return
-    if decision:
-        sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
-                                                            "decision": decision}}))
+    if not decision:
+        return
+    if request.get("hook_event_name") == "PreToolUse":
+        if decision.get("behavior") != "allow":
+            return
+        out = {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": decision["updatedInput"]}
+    else:
+        out = {"hookEventName": "PermissionRequest", "decision": decision}
+    sys.stdout.write(json.dumps({"hookSpecificOutput": out}))

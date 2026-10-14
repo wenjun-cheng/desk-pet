@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import queue
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -77,7 +78,7 @@ class ClaudeSession(QObject):
     def show(self):
         """The conversation on screen, in a terminal like any Claude terminal: brought to the front if it's open,
         else opened. At once, even while a job waits on the session (for an answer in it, say)."""
-        if self._relay is not None and self._relay.alive():
+        if self._relay is not None and not self._relay_closed() and self._relay.alive():
             hwnd = desktop.terminal_window(self._relay_process.pid) if self._relay_process else 0
             if hwnd:
                 self.located.emit(hwnd)
@@ -86,6 +87,13 @@ class ClaudeSession(QObject):
             self._open_relay()
         else:  # no session yet: started first
             self._jobs.put(_SHOW)
+
+    def _relay_closed(self) -> bool:
+        """Its terminal was closed: the relay's process ended (on Windows, where it's the relay itself; elsewhere
+        it's what opened the terminal, which ends at once). Until then a just-opened relay counts as starting for
+        a while, so double-clicking right after closing it did nothing, and messages went to it and were lost."""
+        proc = self._relay_process
+        return sys.platform == "win32" and proc is not None and proc.poll() is not None
 
     def close(self):
         """The pet is quitting: its own terminal goes (the session and the user's terminal stay)."""
@@ -106,7 +114,7 @@ class ClaudeSession(QObject):
 
     def _current(self) -> Console | None:
         """The attached terminal right now, if any (it changes when the user opens the conversation)."""
-        if self._relay is not None and self._relay.alive():
+        if self._relay is not None and not self._relay_closed() and self._relay.alive():
             return self._relay
         if self._hidden is not None and self._hidden.alive():
             return self._hidden
@@ -132,6 +140,16 @@ class ClaudeSession(QObject):
         """The background session's entry in `claude agents`, after starting one (resuming the bubble's
         conversation) if there's none. The first time, the workspace has to be trusted, in a terminal."""
         entry = launch.background_session(self.cwd, self.env, self.background_id)
+        if entry is not None and not launch.config_current():  # from an older pet: started again, to have it all
+            log.info("The pet's additions to Claude changed: restarting the background session %s",
+                     self.background_id)
+            with self._lock:
+                if self._hidden is not None:
+                    self._hidden.close()
+                    self._hidden = None
+            launch.stop_background(self.cwd, self.env, self.background_id)
+            self.session_id = entry.get("sessionId") or self.session_id  # (the conversation carries on)
+            entry = None
         if entry is not None:
             return entry
         self.cwd.mkdir(parents=True, exist_ok=True)

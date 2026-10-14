@@ -30,7 +30,9 @@ class PtyTerminal:
         """echo: also gets everything the program prints (the relay shows it in a real terminal)."""
         if sys.platform == "win32":
             from winpty import PtyProcess
-            self.proc = PtyProcess.spawn(argv, cwd=str(cwd), env=env, dimensions=(rows, cols))
+            from ..desktop.windows import console_for_pty
+            with console_for_pty():
+                self.proc = PtyProcess.spawn(argv, cwd=str(cwd), env=env, dimensions=(rows, cols))
         else:
             from ptyprocess import PtyProcessUnicode
             self.proc = PtyProcessUnicode.spawn(argv, cwd=str(cwd), env=env, dimensions=(rows, cols))

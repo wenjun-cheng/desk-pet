@@ -161,3 +161,41 @@ def test_failure_is_reported(claude_session, monkeypatch):
     s.send("hi")
     assert _until(lambda: heard["failed"], 5)
     assert heard["failed"] == ["no_claude"] and not s.busy
+
+
+@pytest.mark.skipif(os.name != "nt", reason="whether its terminal was closed can be told on Windows")
+def test_reopened_right_after_its_terminal_was_closed(claude_session, monkeypatch):
+    s, _ = claude_session(FakeClaude("sess-r"))
+    from deskpet import desktop
+
+    class Relay:
+        def alive(self):
+            return True  # (just opened: still counts as starting)
+
+        def starting(self):
+            return True
+
+    class Proc:
+        pid, code = 4321, None
+
+        def poll(self):
+            return self.code
+
+        def kill(self):
+            self.code = 1
+
+    opened, located = [], []
+    monkeypatch.setattr(s, "_open_relay", lambda: opened.append(1))
+    s.located.connect(located.append)
+    monkeypatch.setattr(desktop, "terminal_window", lambda pid: 77)
+    s._relay, s._relay_process = Relay(), Proc()
+    s.show()
+    assert located == [77] and not opened  # open: to the front
+    s._relay_process.code = 0  # closed: its relay ended
+    s.show()
+    assert opened == [1]
+    assert s._relay_closed()  # (so nothing is typed into it any more: see _current)
+    monkeypatch.setattr(desktop, "terminal_window", lambda pid: 0)  # no window found, yet still running: left be
+    s._relay_process = Proc()
+    s.show()
+    assert opened == [1] and s._relay_process.code is None and not s._relay_closed()

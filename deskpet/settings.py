@@ -10,6 +10,7 @@ DEFAULTS = {
     "workspace": None,    # the folder Claude works in, None: ~/Claude
     "session": None,      # the bubble's conversation, kept across restarts until New conversation
     "background": None,   # the Claude Code background session it runs in
+    "reply": None,        # Claude's last answer in the bubble, shown again after a restart
 }
 
 
