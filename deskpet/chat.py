@@ -54,6 +54,17 @@ def request_what(given: dict) -> str:
 
 SKIPPED = "(The user skipped this question.)"  # the answer to a question skipped in the bubble
 
+
+def _forget_old_images(days: float = 7):
+    """Images pasted into the bubble, a while ago (Claude has read them by then)."""
+    cutoff = time.time() - days * 86400
+    for f in paths.IMAGES.glob("*.png") if paths.IMAGES.exists() else ():
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+        except OSError:
+            pass
+
 class Chat(QObject):
     """Click the pet or press Ctrl+Alt+Space: it jumps out with the bubble to type in (or puts it away). Double
     click: the conversation in a terminal. Answers, questions and errors wait in the bubble; only a permission
@@ -98,6 +109,8 @@ class Chat(QObject):
         self.bubble.mic_tip = tr("mic")
         self.bubble.mic_clicked.connect(self.mic)
         self.bubble.chosen.connect(self._choose)
+        self.bubble.image_dir = paths.IMAGES
+        _forget_old_images()
         self.bubble.link.connect(self._quiz_link)
         self.bubble.voice_cancelled.connect(lambda: self.stop_listening(keep=False))
         self.held = False           # Ctrl+Alt+Space is down
@@ -355,8 +368,14 @@ class Chat(QObject):
 
     # ------------------------------------------------------------ talking
 
+    def _with_images(self, text: str) -> str:
+        """An answer (not a message, which attaches them): images pasted into it as their files' paths."""
+        text, images = self.bubble.take_images(text)
+        return " ".join([text, *images]).strip()
+
     def _submit(self, text: str):
         if self._quiz is not None:  # an answer of one's own (or, "", the choices ticked)
+            text = self._with_images(text)
             if text.strip().lower() in ("skip", tr("skip_words")):
                 self._answer(SKIPPED)
                 return
@@ -365,12 +384,14 @@ class Chat(QObject):
             self._answer(text or (labels if q.get("multiSelect") else labels[0]))
             return
         if self._permission is not None:  # the answer to the permission question in the bubble
+            text = self._with_images(text)
             reply, self._permission = self._permission, None
             reply({"behavior": "allow"} if is_yes(text) else
                   {"behavior": "deny", "message": f"The user didn't allow it. They said: {text}"})
             self._say(tr("thinking"), "working")
             return
         if text.split()[0].lower() in NEW_CONVERSATION:
+            self.bubble.take_images("")  # (nothing to send them with)
             self.new_topic()
             return
         if self.bubble.kind == "question":  # a question waits in a terminal: answers go there, not as a message
@@ -378,7 +399,10 @@ class Chat(QObject):
             return
         self.pending += 1
         self.done, self.sweat_since = False, None
-        log.info("Asked Claude")
+        text, images = self.bubble.take_images(text)
+        if images and not text:
+            text = tr("about_images")
+        log.info("Asked Claude" + (f" (with {len(images)} image(s))" if images else ""))
         self._say(tr("thinking"), "working")
         # which window "this" is: on the message's first line, and for the screenshot tool (claude/tools.py)
         about = self.target if desktop.window_exists(self.target) else 0
@@ -386,7 +410,7 @@ class Chat(QObject):
             paths.TARGET.write_text(json.dumps({"window": about}), "utf-8")
         except OSError:
             log.warning("Couldn't save the target window", exc_info=True)
-        self.session.send(text, desktop.describe(about) if about else "")
+        self.session.send(text, desktop.describe(about) if about else "", tuple(images))
 
     def open_conversation(self):
         """Double click or Open terminal: the conversation in a terminal, like any Claude terminal (attached to

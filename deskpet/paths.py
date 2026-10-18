@@ -52,6 +52,7 @@ MODELS = cache_dir() / "models"      # the speech model (voice.py)
 USAGE = DATA / "usage.json"          # the plan's limits (claude/usage.py)
 STATUS = DATA / "statusline"         # what Claude Code last gave the status line, per session (claude/statusline.py)
 TARGET = DATA / "target.json"        # the window the user means by "this" (claude/tools.py)
+IMAGES = DATA / "images"             # images pasted into the bubble (sent to Claude as files; kept a week)
 # Where Claude works: a folder of its own. Not the home folder: Claude Code never remembers trusting that.
 DEFAULT_WORKSPACE = Path.home() / "Claude"
 CLAUDE_HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")  # Claude Code's own data

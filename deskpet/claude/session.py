@@ -6,6 +6,7 @@ the session's transcript."""
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 import queue
 import subprocess
 import sys
@@ -31,6 +32,13 @@ WAIT_NOTICE = 2         # seconds Claude has been waiting on the user before the
                         # permission question the hook passed to the bubble is already showing there)
 _SHOW, _CLEAR = object(), object()   # jobs besides messages: see show() and new_topic()
 
+
+
+@dataclass(frozen=True)
+class _Message:
+    """A message to send, and the images (files) that go with it."""
+    text: str
+    images: tuple[str, ...] = ()
 
 class ClaudeSession(QObject):
     progress = Signal(str, str)   # tool name, its input summary: what it's doing right now
@@ -65,10 +73,11 @@ class ClaudeSession(QObject):
 
     # ------------------------------------------------------------ from the pet
 
-    def send(self, text: str, window: str = ""):
+    def send(self, text: str, window: str = "", images: tuple[str, ...] = ()):
         """window: the window the user was in ('title (program)'), told to Claude on the first line (not for a
-        slash command: it has to come first, or Claude Code takes it as text)."""
-        self._jobs.put(f"[Window: {window}]\n{text}" if window and not text.startswith("/") else text)
+        slash command: it has to come first, or Claude Code takes it as text). images: files to attach."""
+        self._jobs.put(_Message(f"[Window: {window}]\n{text}" if window and not text.startswith("/") else text,
+                                tuple(images)))
 
     def new_topic(self):
         """A new conversation: /clear in the session (once it's done with what it's doing)."""
@@ -193,7 +202,7 @@ class ClaudeSession(QObject):
     def _work(self):
         while True:
             job = self._jobs.get()
-            self.busy, self._working = isinstance(job, str), True
+            self.busy, self._working = isinstance(job, _Message), True
             try:
                 if job is _SHOW:
                     self._background()
@@ -201,10 +210,10 @@ class ClaudeSession(QObject):
                 elif job is _CLEAR:
                     self._clear()
                 else:
-                    self._ask(job)
+                    self._ask(job.text, job.images)
             except Exception as e:
                 log.exception("Talking to Claude failed")
-                if isinstance(job, str):
+                if isinstance(job, _Message):
                     self.failed.emit(str(e)[:160])
             finally:
                 self.busy = self._working = False
@@ -243,7 +252,7 @@ class ClaudeSession(QObject):
                     time.sleep(0.3)
         self._fusion_up = up
 
-    def _ask(self, text: str):
+    def _ask(self, text: str, images: tuple[str, ...] = ()):
         """Type the message into the session's terminal and follow the transcript until Claude has answered. A
         slash command's answer is what it prints; one that opens a menu in the terminal waits for the user there."""
         command = text.startswith("/")
@@ -262,7 +271,7 @@ class ClaudeSession(QObject):
         if not command:
             self._connect_fusion()
         follower = transcript.Follower(transcript.transcript(self.session_id))
-        if not type_message(self._console(), text):
+        if not type_message(self._console(), text, images):
             raise RuntimeError("e_type")
         sent_at = time.monotonic()
         entered = retyped = arrived = asked = False
@@ -320,7 +329,7 @@ class ClaudeSession(QObject):
                     entered = True
                 elif waited > RETYPE_AFTER and not retyped:
                     log.info("The message hasn't arrived; typing it again")
-                    type_message(self._console(), text)
+                    type_message(self._console(), text, images)
                     retyped = True
                 elif waited > DELIVERY_TIMEOUT:
                     console = self._current()

@@ -31,6 +31,7 @@ _STRINGS = {  # key: (English, Chinese)
     "keys_many": ("↑↓: move · Space or click: tick\nEnter: answer · Tab: skip\nShift+Tab: back",
                   "↑↓：移动 · 空格或点击：勾选\nEnter：确认 · Tab：跳过\nShift+Tab：上一题"),
     "skip_words": ("skip", "跳过"),
+    "about_images": ("(see the image)", "（看图）"),
     "in_terminal": ("Claude is waiting for you in the terminal", "Claude 在终端里等你确认"),
     "open_terminal": ("Double-click the pet to open the terminal", "双击桌宠打开终端"),
     "answer_there": ("Answer in the terminal that opened", "在打开的终端里回答"),

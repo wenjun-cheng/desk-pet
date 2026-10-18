@@ -70,8 +70,8 @@ class FakeSession(QObject):
         self.busy = False
         self.sent, self.shown, self.new_topics = [], 0, 0
 
-    def send(self, text, window=""):
-        self.sent.append((text, window))
+    def send(self, text, window="", images=()):
+        self.sent.append((text, window) if not images else (text, window, images))
         self.busy = True
 
     def show(self):

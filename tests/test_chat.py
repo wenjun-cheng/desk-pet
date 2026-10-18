@@ -363,3 +363,93 @@ def test_long_choices_scroll(world):
     assert b.cursor == 3 and b.choice_scroll > 0  # (the last one, scrolled into view)
     QTest.keyClick(b.line, Qt.Key.Key_Down)  # round to the first: back at the top
     assert b.cursor == 0 and b.choice_scroll == 0
+
+
+def test_pasting_images(world, tmp_path):
+    from PySide6.QtCore import QMimeData, QUrl
+    from PySide6.QtGui import QColor, QImage
+    w = world
+    w.chat.toggle()
+    wait(450)
+    w.bubble.image_dir = tmp_path / "images"
+    image = QImage(40, 20, QImage.Format.Format_RGB32)
+    image.fill(QColor("red"))
+    pasted = QMimeData()
+    pasted.setImageData(image)
+    w.bubble.line.setPlainText("what's this ")
+    w.bubble.line.moveCursor(w.bubble.line.textCursor().MoveOperation.End)
+    assert w.bubble.line.canInsertFromMimeData(pasted)
+    w.bubble.line.insertFromMimeData(pasted)  # Ctrl+V with an image
+    dropped = QMimeData()
+    dropped.setUrls([QUrl.fromLocalFile(str(tmp_path / "photo.jpg"))])
+    w.bubble.line.insertFromMimeData(dropped)  # a file dropped on it
+    assert w.bubble.line.toPlainText() == "what's this [Image #1][Image #2]"
+    saved = list((tmp_path / "images").glob("*.png"))
+    assert len(saved) == 1
+    w.bubble._send()
+    assert w.claude.sent == [("what's this", "", (str(saved[0]), str(tmp_path / "photo.jpg")))]
+    w.claude.answer("A red box.")
+    w.bubble.line.insertFromMimeData(pasted)  # an image alone
+    w.bubble._send()
+    assert w.claude.sent[-1][0] == tr("about_images") and len(w.claude.sent[-1][2]) == 1
+
+
+def test_pasting_text_that_comes_with_a_picture(world, tmp_path):
+    """Excel, Word and browsers copy a picture of what's copied too: the text is what's pasted."""
+    from PySide6.QtCore import QMimeData
+    from PySide6.QtGui import QColor, QImage
+    w = world
+    w.chat.toggle()
+    wait(450)
+    w.bubble.image_dir = tmp_path / "images"
+    image = QImage(40, 20, QImage.Format.Format_RGB32)
+    image.fill(QColor("blue"))
+    cells = QMimeData()
+    cells.setImageData(image)
+    cells.setText("A1\tB1")
+    w.bubble.line.insertFromMimeData(cells)
+    assert w.bubble.line.toPlainText() == "A1\tB1" and not w.bubble.images
+
+
+def test_pasting_goes_in_the_way_claude_codes_prompt_takes_it(world, tmp_path):
+    """An image file's path pasted alone: an image. Other files dropped: their paths. Typed spaces: kept."""
+    from PySide6.QtCore import QMimeData, QUrl
+    w = world
+    w.chat.toggle()
+    wait(450)
+    picture = tmp_path / "a b.png"
+    picture.write_bytes(b"")
+    copied = QMimeData()
+    copied.setText(f'"{picture}"')
+    dropped = QMimeData()
+    dropped.setUrls([QUrl.fromLocalFile(str(tmp_path / "notes.txt")), QUrl.fromLocalFile(str(tmp_path / "my notes.md"))])
+    w.bubble.line.setPlainText("x  =  1 ")
+    w.bubble.line.moveCursor(w.bubble.line.textCursor().MoveOperation.End)
+    w.bubble.line.insertFromMimeData(copied)
+    w.bubble.line.insertPlainText(" and ")
+    w.bubble.line.insertFromMimeData(dropped)
+    assert w.bubble.line.toPlainText() == f'x  =  1 [Image #1] and {tmp_path / "notes.txt"} "{tmp_path / "my notes.md"}"'
+    w.bubble._send()
+    assert w.claude.sent == [(f'x  =  1 and {tmp_path / "notes.txt"} "{tmp_path / "my notes.md"}"', "", (str(picture),))]
+
+
+def test_images_in_an_answer_go_as_paths(world, tmp_path):
+    from PySide6.QtCore import QMimeData, QUrl
+    w = world
+    w.chat.toggle()
+    wait(450)
+    w.bubble.line.setPlainText("help me pick")
+    w.bubble._send()
+    answers = []
+    _ask(w, answers)
+    dropped = QMimeData()
+    dropped.setUrls([QUrl.fromLocalFile(str(tmp_path / "mine.png"))])
+    w.bubble.line.setPlainText("like this  ")
+    w.bubble.line.moveCursor(w.bubble.line.textCursor().MoveOperation.End)
+    w.bubble.line.insertFromMimeData(dropped)
+    w.bubble.line.insertPlainText("  one")
+    w.bubble._send()
+    w.bubble.link.emit("skip")
+    w.bubble.link.emit("skip")
+    got = answers[0]["updatedInput"]["answers"]["Which kind?"]
+    assert got == "like this one " + str(tmp_path / "mine.png") and not w.bubble.images

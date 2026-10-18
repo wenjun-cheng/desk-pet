@@ -3,11 +3,13 @@ and what it says back."""
 from __future__ import annotations
 
 import math
+import re
 import time
+from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QLinearGradient, QPainter, QPainterPath, QPalette, QPen, \
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPalette, QPen, \
     QTextCursor, QTextDocument, QTextLayout, QTextOption
 from PySide6.QtWidgets import QFrame, QTextEdit, QToolTip, QWidget
 
@@ -80,6 +82,7 @@ TEXT_STYLE = (
     "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
     "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }")
 WRAP = QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".webp")  # (what Claude Code attaches as images)
 SCROLL_W = 6                    # the scroll bar's width (TEXT_STYLE)
 
 
@@ -98,6 +101,8 @@ class _Text(QTextEdit):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.document().setDocumentMargin(0)
         self.key_hook: Callable[[object], bool] | None = None   # sees keys first (True: it used the key)
+        self.image_hook: Callable[[object], str] | None = None  # an image pasted or dropped (QImage, or a
+        # file's path): what goes in the line for it
         self.set_color(INK)
         if not editable:
             self.setReadOnly(True)
@@ -145,6 +150,50 @@ class _Text(QTextEdit):
                 and self.key_hook is not None and self.key_hook(e):
             return True
         return super().event(e)
+
+    # A paste or a drop goes in the way Claude Code's prompt takes it: images as [Image #n], other files as their
+    # paths, text as it is.
+
+    @staticmethod
+    def _files(source) -> list[str]:
+        return [str(Path(u.toLocalFile())) for u in source.urls() if u.isLocalFile()] if source.hasUrls() else []
+
+    def _images(self, source) -> list:
+        if self.image_hook is None or self.isReadOnly():
+            return []
+        if source.hasText():  # an image file's path, alone (as copied from Explorer with Ctrl+Shift+C)
+            path = source.text().strip().strip('"')
+            if path.lower().endswith(IMAGE_FILES) and "\n" not in path and Path(path).is_file():
+                return [path]
+        if source.hasImage() and not (source.hasText() and source.text().strip()):
+            # (Excel, Word, OneNote and browsers copy a picture of what's copied along with its text: the text)
+            image = source.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                return [image]
+        return []
+
+    def canInsertFromMimeData(self, source) -> bool:
+        return bool(self._files(source) or self._images(source)) or super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        files = self._files(source)
+        if files and not self.isReadOnly():
+            pieces = []
+            for f in files:
+                token = self.image_hook(f) if self.image_hook is not None and f.lower().endswith(IMAGE_FILES) else ""
+                pieces.append(token or (f'"{f}"' if " " in f else f))
+            self.insertPlainText(" ".join(pieces))
+            return
+        images = self._images(source)
+        if not images:
+            super().insertFromMimeData(source)
+            return
+        tokens = [self.image_hook(image) for image in images]
+        if not any(tokens) and source.hasText():  # (it couldn't be kept: the text, if there's some)
+            super().insertFromMimeData(source)
+            return
+        for token in tokens:
+            self.insertPlainText(token)
 
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) \
@@ -228,6 +277,9 @@ class SpeechBubble(QWidget):
         self.line = _Text(self, editable=True)
         self.line.submitted.connect(self._send)
         self.line.key_hook = self._choice_key
+        self.line.image_hook = self._image_pasted
+        self.image_dir: Path | None = None        # where pasted images are saved (none: they can't be)
+        self.images: dict[str, str] = {}          # "[Image #n]" in the line: the file
         self.line.textChanged.connect(self._relayout)  # grow with the text
 
         self.anim_timer = QTimer(self, interval=15, timeout=self._animate)
@@ -310,6 +362,32 @@ class SpeechBubble(QWidget):
         self.line.height_for(300, sample + "\nX")
         self.text.height_for(300, sample)
         self.winId()
+
+    def _image_pasted(self, image) -> str:
+        """An image pasted (saved to a file) or a file dropped: [Image #n] in the line for it."""
+        if isinstance(image, QImage):
+            if self.image_dir is None:
+                return ""
+            path = self.image_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 10**9:09d}.png"
+            try:
+                self.image_dir.mkdir(parents=True, exist_ok=True)
+                saved = image.save(str(path), "PNG")
+            except OSError:
+                saved = False
+            if not saved:
+                return ""
+            image = str(path)
+        token = f"[Image #{len(self.images) + 1}]"
+        self.images[token] = str(Path(image))
+        return token
+
+    def take_images(self, text: str) -> tuple[str, list[str]]:
+        """The images a message has ([Image #n] still in it), in order, and the message without them."""
+        found = sorted((text.find(token), path) for token, path in self.images.items() if token in text)
+        for token in self.images:  # (the spaces around it with it; what was typed elsewhere stays as it was)
+            text = re.sub(r"[ \t]*" + re.escape(token) + r"[ \t]*", " ", text)
+        self.images = {}
+        return text.strip(), [path for _, path in found]
 
     def put_back(self, text: str):
         """A message that couldn't be sent goes back in the line (and what was said, after what was typed)."""

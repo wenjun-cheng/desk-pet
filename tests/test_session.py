@@ -199,3 +199,29 @@ def test_reopened_right_after_its_terminal_was_closed(claude_session, monkeypatc
     s._relay_process = Proc()
     s.show()
     assert opened == [1] and s._relay_process.code is None and not s._relay_closed()
+
+
+def test_images_pasted_each_on_its_own():
+    """Claude Code attaches a pasted image path ([Image #n]) only when it's pasted alone."""
+    from deskpet.claude.terminal import type_message
+
+    class Prompt:
+        def __init__(self):
+            self.text, self.pastes = "", []
+
+        def write(self, data):
+            if data.startswith(PASTE_START):
+                part = data[len(PASTE_START):-len(PASTE_END)]
+                self.pastes.append(part)
+                self.text += f"[Image #{len(self.pastes) - 1}]" if part.startswith(" C:") else part
+
+        def rows(self):
+            return ["❯ " + self.text, "──"]
+
+        def alive(self):
+            return True
+
+    prompt = Prompt()
+    assert type_message(prompt, "what's in these?", (r"C:\a b\one.png", r"C:\two.png"))
+    assert prompt.pastes == ["what's in these?", r" C:\a b\one.png", r" C:\two.png"]
+    assert prompt.text == "what's in these?[Image #1][Image #2]"

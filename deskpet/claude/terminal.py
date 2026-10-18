@@ -3,6 +3,7 @@ its screen kept by pyte so it can be read the way a terminal window shows it; an
 Code's prompt, in such a terminal or in any other "console" that can be written to and read."""
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 import time
@@ -11,6 +12,7 @@ from typing import Callable, Protocol
 
 import pyte
 
+log = logging.getLogger("pet.claude")
 PASTE_START, PASTE_END = "\x1b[200~", "\x1b[201~"  # bracketed paste: line breaks stay line breaks
 
 
@@ -125,11 +127,13 @@ def _in_prompt(console: Console, text: str) -> bool:
     return bool(start) and start in box or "[Pastedtext" in box
 
 
-def type_message(console: Console, text: str) -> bool:
+def type_message(console: Console, text: str, images: tuple[str, ...] = ()) -> bool:
     """Type a message into Claude's prompt and send it. Whatever was half typed there goes first (what's sent
     wins). The text goes in as one paste, so line breaks stay line breaks, and Enter comes a moment later on its
     own (in the same burst, Claude Code takes it as part of the paste and the message sits there unsent). If the
-    text doesn't show up in the prompt (keys can get lost right after a terminal attaches), it's typed again."""
+    text doesn't show up in the prompt (keys can get lost right after a terminal attaches), it's typed again.
+    images: files, each pasted after the text on its own (Claude Code attaches a pasted image path as an image,
+    [Image #n]; several in one paste stay text)."""
     text = text.replace("\r\n", "\n")
     for _ in range(3):
         clear_prompt(console)
@@ -141,9 +145,22 @@ def type_message(console: Console, text: str) -> bool:
             break
     else:
         return False
+    before = _attached(console)  # (the text may hold [Image #n] itself)
+    for i, path in enumerate(images, 1):
+        console.write(PASTE_START + " " + path + PASTE_END)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and _attached(console) < before + i:
+            time.sleep(0.1)
+        if _attached(console) < before + i:  # (left as a path: Claude can still read the file)
+            log.warning("An image didn't attach: %s", path)
     time.sleep(0.4)
     console.write("\r")
     return True
+
+
+def _attached(console: Console) -> int:
+    """How many images the prompt has (Claude Code's [Image #n])."""
+    return _squeezed(" ".join(prompt_box(console.rows()))).count("[Image#")
 
 
 def press_enter(console: Console):
