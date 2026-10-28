@@ -64,6 +64,20 @@ def test_bubble_grows_wider_then_taller(world):
     assert w.bubble.height() == capped  # it scrolls from there
 
 
+def test_the_tail_sits_by_the_bubbles_corner(world):
+    """Wherever the pet is, the bubble reaches away from it, its tail by the corner over the pet."""
+    from PySide6.QtGui import QGuiApplication
+    w = world
+    w.chat.toggle()
+    wait(450)
+    middle = QGuiApplication.primaryScreen().availableGeometry().center()
+    for flipped in (False, True):
+        w.bubble.point_at(middle, flipped)
+        w.bubble._relayout()
+        width = w.bubble.width() - 2 * w.bubble.ROOM
+        assert w.bubble.tail_x == (width - w.bubble.TAIL_IN if flipped else w.bubble.TAIL_IN)
+
+
 def test_scrolls_only_past_five_lines(world):
     w = world
     w.chat.toggle()

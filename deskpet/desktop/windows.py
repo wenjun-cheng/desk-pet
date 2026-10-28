@@ -196,7 +196,8 @@ def _input_method(hwnd: int) -> bool:
 def _covered(hwnd: int, ours: set[int]) -> str:
     """What's over one of our windows: "" nothing; "screen" something over the whole screen it's on (a
     screenshot tool's overlay, a full-screen video); "ime" an input method's window (its candidate list:
-    typing in the bubble, it has to stay over it); "window" something else (the taskbar, say)."""
+    typing in the bubble, it has to stay over it); "drag" the picture of what's being dragged (a file, on its
+    way to the bubble, say: it has to stay over it too); "window" something else (the taskbar, say)."""
     me = _rect(hwnd)
     info = _MonitorInfo(cbSize=ctypes.sizeof(_MonitorInfo))
     _u32.GetMonitorInfoW(_u32.MonitorFromWindow(hwnd, 2), ctypes.byref(info))  # MONITOR_DEFAULTTONEAREST
@@ -210,6 +211,8 @@ def _covered(hwnd: int, ours: set[int]) -> str:
             if r.left < me.right and r.right > me.left and r.top < me.bottom and r.bottom > me.top:
                 if _input_method(above):
                     return "ime"
+                if _class_name(above) == "SysDragImage":  # (the shell's, for a drag from Explorer, a browser…)
+                    return "drag"
                 found = "window"
         above = _u32.GetWindow(above, 3)
     return found
@@ -219,10 +222,10 @@ def keep_on_top(window_ids: list[int]):
     """Above everything, the taskbar included (it comes up over the pet when the mouse reaches the bottom of the
     screen): when something gets over our windows, they go back on top. But not over what covers the whole
     screen (a screenshot tool's overlay, a full-screen video: those are meant to be on top), nor while an input
-    method's candidate list is over them."""
+    method's candidate list or the picture of something being dragged is over them."""
     ours = set(window_ids)
     covers = {_covered(w, ours) for w in window_ids}
-    if "window" in covers and not covers & {"screen", "ime"}:
+    if "window" in covers and not covers & {"screen", "ime", "drag"}:
         for w in window_ids:
             _u32.SetWindowPos(w, HWND_TOPMOST, 0, 0, 0, 0, SWP_STAY)
 

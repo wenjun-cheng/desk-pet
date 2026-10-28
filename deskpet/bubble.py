@@ -223,7 +223,8 @@ class SpeechBubble(QWidget):
     PAD, TAIL, GAP = 14, 15, 12
     MIC_W = 22                    # room for the mic (or the stop button), right of the line
     MAX_LINES = 5                 # for the message and for the line alike; past that they scroll
-    TAIL_IN = 82                  # how far in from its end (nearest the pet) the tail sits: at most a third
+    TAIL_IN = 24                  # how far in from its end (nearest the pet) the tail sits: by the corner, always
+    # (as it was when the pet sat by the screen's edge: the bubble reaching away from it looks best)
     POP_MS = 180
     CHOICE_IN = 24                # a choice's text, in from its number
     CHOICE_LINES = 2              # a choice's label, and its description, at most (but the one in focus)
@@ -576,8 +577,7 @@ class SpeechBubble(QWidget):
         # over the pet, the tail near its end by the pet; the tail's base is 9 px aside from its tip (it hooks)
         d = -1 if self.flipped else 1
         base = self.anchor.x() + 9 * d
-        tail_in = min(width // 3, self.TAIL_IN)
-        x = base - (width - tail_in if self.flipped else tail_in)
+        x = base - (width - self.TAIL_IN if self.flipped else self.TAIL_IN)
         x = min(max(x, area.left() + margin), area.right() - width - margin)
         y = max(self.anchor.y() - height - 2, area.top() + margin)
         r = self.ROOM
